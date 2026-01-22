@@ -1,6 +1,6 @@
 services:
   jetstream:
-    image: ghcr.io/juanqp07/jetstream:latest
+    build: .
     container_name: jetstream
     ports:
       - "8080:8080"

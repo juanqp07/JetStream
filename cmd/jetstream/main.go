@@ -1,10 +1,10 @@
 package main
 
 import (
-	"log"
 	"jetstream/internal/config"
 	"jetstream/internal/handlers"
 	"jetstream/internal/service"
+	"log"
 	"os"
 
 	"github.com/gin-gonic/gin"
@@ -31,8 +31,8 @@ func main() {
 	// 2. Initialize Services
 	squidService := service.NewSquidService(cfg)
 	proxyHandler := handlers.NewProxyHandler(cfg)
-	searchHandler := handlers.NewSearchHandler(squidService, cfg)
 	syncService := service.NewSyncService(squidService, cfg)
+	searchHandler := handlers.NewSearchHandler(squidService, syncService, cfg)
 	metadataHandler := handlers.NewMetadataHandler(squidService, syncService, proxyHandler)
 	handler := handlers.NewHandler(squidService, syncService, proxyHandler)
 

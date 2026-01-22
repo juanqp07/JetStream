@@ -2,11 +2,9 @@ name: Docker Image CI/CD
 
 on:
   push:
-    branches: [ "main", "master" ]
-    # Publish semver tags as releases.
     tags: [ 'v*.*.*' ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
 
 env:
   REGISTRY: ghcr.io

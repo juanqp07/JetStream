@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"jetstream/internal/config"
+	"jetstream/pkg/subsonic"
+
+	"github.com/bogem/id3v2/v2"
 )
 
 type SyncService struct {
@@ -84,6 +87,64 @@ func (s *SyncService) SyncSong(songID string) error {
 	}
 
 	return s.downloadAndTranscode(trackInfo.DownloadURL, filePath, ext)
+}
+
+func (s *SyncService) CreateGhostFile(song *subsonic.Song) error {
+	ghostDir := filepath.Join(s.cfg.MusicFolder, ".search")
+	if err := os.MkdirAll(ghostDir, 0755); err != nil {
+		return err
+	}
+
+	// Filename: {ID}.mp3
+	filePath := filepath.Join(ghostDir, song.ID+".mp3")
+
+	// Create a dummy file (1KB)
+	f, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	// Write some padding to make it ~1KB
+	f.Write(make([]byte, 1024))
+	f.Close()
+
+	// Add ID3 Tags
+	tag, err := id3v2.Open(filePath, id3v2.Options{Parse: true})
+	if err != nil {
+		return err
+	}
+	defer tag.Close()
+
+	tag.SetTitle(song.Title)
+	tag.SetArtist(song.Artist)
+	tag.SetAlbum(song.Album)
+	// Add Tidal ID as custom tag for easy recovery
+	tag.AddUserDefinedTextFrame(id3v2.UserDefinedTextFrame{
+		Encoding:    id3v2.EncodingUTF8,
+		Description: "TIDAL_ID",
+		Value:       song.ID,
+	})
+
+	return tag.Save()
+}
+
+func (s *SyncService) ClearSearchCache() error {
+	ghostDir := filepath.Join(s.cfg.MusicFolder, ".search")
+	if _, err := os.Stat(ghostDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	// Remove all files in .search
+	files, err := os.ReadDir(ghostDir)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		if !f.IsDir() {
+			os.Remove(filepath.Join(ghostDir, f.Name()))
+		}
+	}
+	return nil
 }
 
 func (s *SyncService) downloadAndTranscode(url, outputPath, format string) error {
