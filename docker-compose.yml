@@ -1,0 +1,25 @@
+services:
+  jetstream:
+    image: ghcr.io/juanqp07/jetstream:latest
+    container_name: jetstream
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - NAVIDROME_URL=http://navidrome:4533
+      - SEARCH_LIMIT=${SEARCH_LIMIT:-50}
+      - DOWNLOAD_FORMAT=${DOWNLOAD_FORMAT:-opus}
+    restart: unless-stopped
+    volumes:
+      - ./music:/music:rw
+
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    user: 1000:1000
+    ports:
+      - 4533:4533
+    restart: unless-stopped
+    volumes:
+      - ./data:/data:rw
+      - ./music:/music:rw
