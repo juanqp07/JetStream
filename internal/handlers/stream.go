@@ -55,43 +55,39 @@ func (h *Handler) Stream(c *gin.Context) {
 		}
 	}
 
-	// 2. Resolve Metadata (Optimization: Check Ghost Folder first)
+	// 2. Resolve Metadata (Check Local Library first for real or ghost files)
 	var song *subsonic.Song
-	ghostPath := filepath.Join("/music", ".search", id+".mp3")
-	if info, err := os.Stat(ghostPath); err == nil && info.Size() < 5000 {
-		log.Printf("[Stream] Found ghost file metadata for %s", id)
-		tag, err := id3v2.Open(ghostPath, id3v2.Options{Parse: true})
-		if err == nil {
-			defer tag.Close()
-			song = &subsonic.Song{
-				ID:     id,
-				Title:  tag.Title(),
-				Artist: tag.Artist(),
-				Album:  tag.Album(),
-			}
-		}
+	// Note: We don't have artist/album info yet, just ID.
+	// If it's a proxy ID (ext-squidwtf-song-...), we might find it in .search still,
+	// but we really want library-wide detection.
+	// For library-wide detection, Navidrome will have passed us the ID.
+	// If it's a Navidrome ID, checkVirtualSong already handles it and gives us the externalID.
+
+	// Fallback to Squid API for full metadata (required for local path construction)
+	song, err = h.squidService.GetSong(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resolve song info: " + err.Error()})
+		return
 	}
 
-	// Fallback to Squid API if ghost metadata not found/valid
-	if song == nil {
-		song, err = h.squidService.GetSong(id)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resolve song info: " + err.Error()})
-			return
-		}
-	}
-
-	// 3. Check Local Disk (Local-First Serving)
+	// 3. Local Check (Real or Ghost)
 	artistDir := h.syncService.SanitizePath(song.Artist)
 	albumDir := h.syncService.SanitizePath(song.Album)
-	// Track number might be missing if read from ghost, but SanitizePath handles it
 	fileName := fmt.Sprintf("%02d - %s.%s", song.Track, h.syncService.SanitizePath(song.Title), h.syncService.GetDownloadFormat())
 	localPath := filepath.Join("/music", artistDir, albumDir, fileName)
 
-	if info, err := os.Stat(localPath); err == nil && info.Size() > 20000 {
-		log.Printf("[Stream] Serving local file: %s", localPath)
-		c.File(localPath)
-		return
+	// Check Search Results specifically for ghosts
+	searchResultPath := filepath.Join("/music", "Search Results", artistDir, albumDir, fmt.Sprintf("%02d - %s.mp3", song.Track, h.syncService.SanitizePath(song.Title)))
+
+	if info, err := os.Stat(localPath); err == nil {
+		if info.Size() > 50000 { // Large enough to be real
+			log.Printf("[Stream] Serving local file: %s", localPath)
+			c.File(localPath)
+			return
+		}
+		log.Printf("[Stream] Small file detected at %s, treating as ghost", localPath)
+	} else if info, err := os.Stat(searchResultPath); err == nil && info.Size() < 20000 {
+		log.Printf("[Stream] Ghost file detected in Search Results: %s", searchResultPath)
 	}
 
 	// 4. Fallback: Get Stream URL from Squid Service & Proxy
