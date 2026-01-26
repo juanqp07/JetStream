@@ -45,6 +45,7 @@ Configure these in your `docker-compose.yml` or `.env` file:
 | `PORT` | Local listening port | `8080` |
 | `NAVIDROME_URL` | URL of your Navidrome instance | `http://navidrome:4533` |
 | `MUSIC_FOLDER` | Path to sync music to | `/music` |
+| `SEARCH_FOLDER` | Path to store temporary search ghost files | `/music/search` |
 | `SEARCH_LIMIT` | Max items per search category | `50` |
 | `DOWNLOAD_FORMAT` | Preferred audio format (`opus`, `mp3`, `aac`) | `opus` |
 

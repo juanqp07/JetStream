@@ -30,7 +30,7 @@ func NewSearchHandler(squidService *service.SquidService, syncService *service.S
 }
 
 func (h *SearchHandler) Search3(c *gin.Context) {
-	query := c.Query("query")
+	query := c.Request.FormValue("query")
 	if query == "" {
 		// Fallback to proxy if no query (though usually search has query)
 		// Or return empty
@@ -83,7 +83,7 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	if navidromeResult == nil {
 		navidromeResult = &subsonic.Response{
 			Status:        "ok",
-			Version:       "1.16.1",
+			Version:       "1.16.2",
 			SearchResult3: &subsonic.SearchResult3{},
 		}
 	}
@@ -93,8 +93,8 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	}
 
 	if squidResult != nil {
-		log.Printf("[Search] Squid returned %d songs, %d albums, %d artists for query '%s'",
-			len(squidResult.Song), len(squidResult.Album), len(squidResult.Artist), query)
+		log.Printf("[Search] Squid returned %d songs, %d albums, %d artists, %d playlists for query '%s'",
+			len(squidResult.Song), len(squidResult.Album), len(squidResult.Artist), len(squidResult.Playlist), query)
 
 		// Append Songs
 		navidromeResult.SearchResult3.Song = append(navidromeResult.SearchResult3.Song, squidResult.Song...)
@@ -102,12 +102,17 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 		navidromeResult.SearchResult3.Album = append(navidromeResult.SearchResult3.Album, squidResult.Album...)
 		// Append Artists
 		navidromeResult.SearchResult3.Artist = append(navidromeResult.SearchResult3.Artist, squidResult.Artist...)
+		// Append Playlists
+		navidromeResult.SearchResult3.Playlist = append(navidromeResult.SearchResult3.Playlist, squidResult.Playlist...)
 
 		// POPULATE GHOST FILES
 		go func() {
-			if err := h.syncService.ClearSearchCache(); err != nil {
-				log.Printf("[Search] Warning: Failed to clear search cache: %v", err)
-			}
+			// persistence: Don't clear search results anymore as requested
+			/*
+				if err := h.syncService.ClearSearchCache(); err != nil {
+					log.Printf("[Search] Warning: Failed to clear search cache: %v", err)
+				}
+			*/
 			for _, song := range squidResult.Song {
 				if err := h.syncService.CreateGhostFile(&song); err != nil {
 					log.Printf("[Search] Warning: Failed to create ghost file for %s: %v", song.ID, err)
@@ -119,6 +124,5 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	}
 
 	// 3. Return Response
-	// Force XML for now as it's the default Subsonic format
-	c.XML(http.StatusOK, navidromeResult)
+	SendSubsonicResponse(c, *navidromeResult)
 }

@@ -3,47 +3,70 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"jetstream/pkg/subsonic"
 	"log"
 	"net/http"
 	"net/url"
-	"jetstream/pkg/subsonic"
+	"sync"
 )
 
 // Search performs a search on triton.squid.wtf and maps to Subsonic models
 func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
-	// Squid Search URL (mimicking C# logic)
-	// C#: $"{BaseUrl}/search/?s={Uri.EscapeDataString(query)}" for songs
-	// We will do a combined search or just songs/albums for now to demonstrate.
-	// Let's implement Song search first as it's most critical.
+	var (
+		songs     []subsonic.Song
+		albums    []subsonic.Album
+		artists   []subsonic.Artist
+		playlists []subsonic.Playlist
+		wg        sync.WaitGroup
+	)
+
+	wg.Add(4)
 
 	// 1. Search Songs
-	// 1. Search Songs
-	songURL := fmt.Sprintf("%s/search/?s=%s", s.cfg.SquidURL, url.QueryEscape(query))
-	songs, err := s.fetchSongs(songURL)
-	if err != nil {
-		log.Printf("[Search] Error fetching songs: %v", err)
-	}
+	go func() {
+		defer wg.Done()
+		songURL := fmt.Sprintf("%s/search/?s=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		var err error
+		songs, err = s.fetchSongs(songURL)
+		if err != nil {
+			log.Printf("[Search] Error fetching songs: %v", err)
+		}
+	}()
 
 	// 2. Search Albums
-	albumURL := fmt.Sprintf("%s/search/?al=%s", s.cfg.SquidURL, url.QueryEscape(query))
-	albums, err := s.fetchAlbums(albumURL)
-	if err != nil {
-		log.Printf("[Search] Error fetching albums: %v", err)
-	}
+	go func() {
+		defer wg.Done()
+		albumURL := fmt.Sprintf("%s/search/?al=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		var err error
+		albums, err = s.fetchAlbums(albumURL)
+		if err != nil {
+			log.Printf("[Search] Error fetching albums: %v", err)
+		}
+	}()
 
 	// 3. Search Artists
-	artistURL := fmt.Sprintf("%s/search/?a=%s", s.cfg.SquidURL, url.QueryEscape(query))
-	artists, err := s.fetchArtists(artistURL)
-	if err != nil {
-		log.Printf("[Search] Error fetching artists: %v", err)
-	}
+	go func() {
+		defer wg.Done()
+		artistURL := fmt.Sprintf("%s/search/?a=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		var err error
+		artists, err = s.fetchArtists(artistURL)
+		if err != nil {
+			log.Printf("[Search] Error fetching artists: %v", err)
+		}
+	}()
 
 	// 4. Search Playlists
-	playlistURL := fmt.Sprintf("%s/search/?p=%s", s.cfg.SquidURL, url.QueryEscape(query))
-	playlists, err := s.fetchPlaylists(playlistURL)
-	if err != nil {
-		log.Printf("[Search] Error fetching playlists: %v", err)
-	}
+	go func() {
+		defer wg.Done()
+		playlistURL := fmt.Sprintf("%s/search/?p=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		var err error
+		playlists, err = s.fetchPlaylists(playlistURL)
+		if err != nil {
+			log.Printf("[Search] Error fetching playlists: %v", err)
+		}
+	}()
+
+	wg.Wait()
 
 	return &subsonic.SearchResult3{
 		Song:     songs,
@@ -53,20 +76,36 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 	}, nil
 }
 
+// SearchOne attempts to find a single song ID matching the artist and title.
+func (s *SquidService) SearchOne(artist, title string) (string, error) {
+	query := fmt.Sprintf("%s %s", artist, title)
+	res, err := s.Search(query)
+	if err != nil {
+		return "", err
+	}
+
+	if len(res.Song) == 0 {
+		return "", fmt.Errorf("no matches found")
+	}
+
+	// Try to find a good match based on title/artist similarity
+	// For now, just take the first one
+	return res.Song[0].ID, nil
+}
+
 func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
-	// ... (rest of fetchSongs is unchanged, just ensuring context)
-	// Headers
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	// ... rest of the logic remains same
 
 	if resp.StatusCode != http.StatusOK {
 		return []subsonic.Song{}, nil
@@ -103,11 +142,12 @@ func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
 		}
 		songs = append(songs, subsonic.Song{
 			ID:          subsonic.BuildID("squidwtf", "song", fmt.Sprintf("%d", item.ID)),
+			Parent:      subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
 			Title:       item.Title,
-			Artist:      item.Artist.Name,
-			ArtistID:    subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
 			Album:       item.Album.Title,
 			AlbumID:     subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+			Artist:      item.Artist.Name,
+			ArtistID:    subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
 			CoverArt:    subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
 			Duration:    item.Duration,
 			Track:       item.TrackNumber,

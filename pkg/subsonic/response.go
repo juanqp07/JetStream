@@ -4,13 +4,32 @@ import "encoding/xml"
 
 // Response wraps the top-level subsonic-response
 type Response struct {
-	XMLName       xml.Name       `xml:"subsonic-response" json:"-"`
-	Status        string         `xml:"status,attr" json:"status"`
-	Version       string         `xml:"version,attr" json:"version"`
-	SearchResult3 *SearchResult3 `xml:"searchResult3,omitempty" json:"searchResult3,omitempty"`
-	Playlists     *Playlists     `xml:"playlists,omitempty" json:"playlists,omitempty"`
-	Playlist      *Playlist      `xml:"playlist,omitempty" json:"playlist,omitempty"`
-	Error         *Error         `xml:"error,omitempty" json:"error,omitempty"`
+	XMLName                xml.Name                `xml:"subsonic-response" json:"-"`
+	Status                 string                  `xml:"status,attr" json:"status"`
+	Version                string                  `xml:"version,attr" json:"version"`
+	SearchResult3          *SearchResult3          `xml:"searchResult3,omitempty" json:"searchResult3,omitempty"`
+	Playlists              *Playlists              `xml:"playlists,omitempty" json:"playlists,omitempty"`
+	Playlist               *Playlist               `xml:"playlist,omitempty" json:"playlist,omitempty"`
+	Artist                 *ArtistWithAlbums       `xml:"artist,omitempty" json:"artist,omitempty"`
+	Album                  *AlbumWithSongs         `xml:"album,omitempty" json:"album,omitempty"`
+	Song                   *Song                   `xml:"song,omitempty" json:"song,omitempty"`
+	Lyrics                 *Lyrics                 `xml:"lyrics,omitempty" json:"lyrics,omitempty"`
+	OpenSubsonicExtensions *OpenSubsonicExtensions `xml:"openSubsonicExtensions,omitempty" json:"openSubsonicExtensions,omitempty"`
+	Error                  *Error                  `xml:"error,omitempty" json:"error,omitempty"`
+}
+
+type ArtistWithAlbums struct {
+	Artist
+	Album []Album `xml:"album"`
+}
+
+type AlbumWithSongs struct {
+	Album
+	Song []Song `xml:"song"`
+}
+
+type Lyrics struct {
+	Value string `xml:",chardata" json:"value"`
 }
 
 type Error struct {
@@ -23,6 +42,15 @@ type SearchResult3 struct {
 	Album    []Album    `xml:"album,omitempty" json:"album,omitempty"`
 	Song     []Song     `xml:"song,omitempty" json:"song,omitempty"`
 	Playlist []Playlist `xml:"playlist,omitempty" json:"playlist,omitempty"`
+}
+
+type OpenSubsonicExtensions struct {
+	Extension []OpenSubsonicExtension `xml:"extension" json:"extension"`
+}
+
+type OpenSubsonicExtension struct {
+	Name     string   `xml:"name,attr" json:"name"`
+	Versions []string `xml:"version" json:"version"`
 }
 
 type Playlists struct {
@@ -57,6 +85,7 @@ type Album struct {
 	SongCount int    `xml:"songCount,attr,omitempty" json:"songCount,omitempty"`
 	Duration  int    `xml:"duration,attr,omitempty" json:"duration,omitempty"`
 	Year      int    `xml:"year,attr,omitempty" json:"year,omitempty"`
+	Starred   string `xml:"starred,attr,omitempty" json:"starred,omitempty"` // ISO 8601 date
 }
 
 type Song struct {
@@ -78,5 +107,9 @@ type Song struct {
 	Suffix      string `xml:"suffix,attr,omitempty" json:"suffix,omitempty"`
 	ContentType string `xml:"contentType,attr,omitempty" json:"contentType,omitempty"`
 	IsVideo     bool   `xml:"isVideo,attr,omitempty" json:"isVideo,omitempty"`
-	Path        string `xml:"path,attr,omitempty" json:"path,omitempty"` // Navidrome uses this
+	Path        string `xml:"path,attr,omitempty" json:"path,omitempty"`
+	Starred     string `xml:"starred,attr,omitempty" json:"starred,omitempty"` // ISO 8601 date
+	BPM         int    `xml:"bpm,attr,omitempty" json:"bpm,omitempty"`
+	Comment     string `xml:"comment,attr,omitempty" json:"comment,omitempty"`
+	SortName    string `xml:"sortName,attr,omitempty" json:"sortName,omitempty"`
 }

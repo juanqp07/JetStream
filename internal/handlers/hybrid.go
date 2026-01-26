@@ -1,11 +1,10 @@
 package handlers
 
 import (
-	"encoding/xml"
-	"log"
-	"net/http"
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
+	"log"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -26,49 +25,28 @@ func NewMetadataHandler(squidService *service.SquidService, syncService *service
 }
 
 func (h *MetadataHandler) GetAlbum(c *gin.Context) {
-	id := c.Query("id")
+	id := c.Request.FormValue("id")
 	log.Printf("[Metadata] GetAlbum request for ID: %s", id)
 	if strings.HasPrefix(id, "ext-") {
-		// Virtual Album from Squid
 		log.Printf("[Metadata] Fetching external album info from Squid: %s", id)
 
 		album, songs, err := h.squidService.GetAlbum(id)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Printf("[Metadata] GetAlbum error for %s: %v", id, err)
+			SendSubsonicError(c, ErrGeneric, err.Error())
 			return
 		}
 
-		// We need a specific struct for GetAlbum response if simple re-use isn't easy
-		// Let's manually construct/wrap for now or assume Response struct has what we need
-		// subsonic.Response defined earlier might need an Album field
-
-		// Let's implement dynamic XML temporarily to match Subsonic protocol
-		// <subsonic-response status="ok" version="1.16.1"><album id="..." ...><song .../></album></subsonic-response>
-
-		type AlbumWithSongs struct {
-			subsonic.Album
-			Song []subsonic.Song `xml:"song"`
-		}
-
-		fullAlbum := AlbumWithSongs{
-			Album: *album,
-			Song:  songs,
-		}
-
-		type AlbumResponse struct {
-			XMLName xml.Name       `xml:"subsonic-response"`
-			Status  string         `xml:"status,attr"`
-			Version string         `xml:"version,attr"`
-			Album   AlbumWithSongs `xml:"album"`
-		}
-
-		finalResp := AlbumResponse{
+		resp := subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.1",
-			Album:   fullAlbum,
+			Version: "1.16.2",
+			Album: &subsonic.AlbumWithSongs{
+				Album: *album,
+				Song:  songs,
+			},
 		}
 
-		c.XML(http.StatusOK, finalResp)
+		SendSubsonicResponse(c, resp)
 		return
 	}
 
@@ -77,90 +55,75 @@ func (h *MetadataHandler) GetAlbum(c *gin.Context) {
 }
 
 func (h *MetadataHandler) GetArtist(c *gin.Context) {
-	id := c.Query("id")
+	id := c.Request.FormValue("id")
 	if strings.HasPrefix(id, "ext-") {
 		artist, albums, err := h.squidService.GetArtist(id)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Printf("[Metadata] GetArtist error for %s: %v", id, err)
+			SendSubsonicError(c, ErrArtistNotFound, err.Error())
 			return
 		}
 
-		type ArtistWithAlbums struct {
-			subsonic.Artist
-			Album []subsonic.Album `xml:"album"`
-		}
-
-		fullArtist := ArtistWithAlbums{
-			Artist: *artist,
-			Album:  albums,
-		}
-
-		type ArtistResponse struct {
-			XMLName xml.Name         `xml:"subsonic-response"`
-			Status  string           `xml:"status,attr"`
-			Version string           `xml:"version,attr"`
-			Artist  ArtistWithAlbums `xml:"artist"`
-		}
-
-		c.XML(http.StatusOK, ArtistResponse{
+		resp := subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.1",
-			Artist:  fullArtist,
-		})
+			Version: "1.16.2",
+			Artist: &subsonic.ArtistWithAlbums{
+				Artist: *artist,
+				Album:  albums,
+			},
+		}
+
+		SendSubsonicResponse(c, resp)
 		return
 	}
 	h.proxyHandler.Handle(c)
 }
 
 func (h *MetadataHandler) GetSong(c *gin.Context) {
-	id := c.Query("id")
-	if strings.HasPrefix(id, "ext-") {
-		song, err := h.squidService.GetSong(id)
+	id := c.Request.FormValue("id")
+	resolvedID, isVirtual, err := ResolveVirtualID(c, h.proxyHandler, h.squidService, id)
+	if err == nil && isVirtual {
+		log.Printf("[Metadata] Intercepted virtual song metadata request: %s (Resolved: %s)", id, resolvedID)
+		song, err := h.squidService.GetSong(resolvedID)
 		if err != nil {
-			// Handle error
+			log.Printf("[Metadata] GetSong error for %s: %v", resolvedID, err)
+			SendSubsonicError(c, ErrDataNotFound, "Song not found")
+			return
 		}
 
-		type SongResponse struct {
-			XMLName xml.Name      `xml:"subsonic-response"`
-			Status  string        `xml:"status,attr"`
-			Version string        `xml:"version,attr"`
-			Song    subsonic.Song `xml:"song"`
-		}
-
-		c.XML(http.StatusOK, SongResponse{
+		resp := subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.1",
-			Song:    *song,
-		})
+			Version: "1.16.2",
+			Song:    song,
+		}
+
+		SendSubsonicResponse(c, resp)
 		return
 	}
+
 	h.proxyHandler.Handle(c)
 }
 
 func (h *MetadataHandler) GetPlaylist(c *gin.Context) {
-	id := c.Query("id")
+	id := c.Request.FormValue("id")
 	if strings.HasPrefix(id, "ext-") {
 		playlist, songs, err := h.squidService.GetPlaylist(id)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			log.Printf("[Metadata] GetPlaylist error for %s: %v", id, err)
+			SendSubsonicError(c, ErrGeneric, err.Error())
 			return
-		}
-
-		type PlaylistResponse struct {
-			XMLName  xml.Name          `xml:"subsonic-response"`
-			Status   string            `xml:"status,attr"`
-			Version  string            `xml:"version,attr"`
-			Playlist subsonic.Playlist `xml:"playlist"`
 		}
 
 		// Map songs to entries
 		playlist.Entry = songs
 
-		c.XML(http.StatusOK, PlaylistResponse{
+		resp := subsonic.Response{
 			Status:   "ok",
 			Version:  "1.16.1",
-			Playlist: *playlist,
-		})
+			Playlist: playlist,
+		}
+
+		SendSubsonicResponse(c, resp)
 		return
 	}
 	h.proxyHandler.Handle(c)
@@ -173,12 +136,15 @@ func (h *MetadataHandler) GetPlaylists(c *gin.Context) {
 }
 
 func (h *MetadataHandler) GetCoverArt(c *gin.Context) {
-	id := c.Query("id")
-	if strings.HasPrefix(id, "ext-") {
-		url, err := h.squidService.GetCoverURL(id)
+	id := c.Request.FormValue("id")
+	resolvedID, isVirtual, err := ResolveVirtualID(c, h.proxyHandler, h.squidService, id)
+
+	if err == nil && isVirtual {
+		log.Printf("[Metadata] Intercepted virtual cover request: %s (Resolved: %s)", id, resolvedID)
+		url, err := h.squidService.GetCoverURL(resolvedID)
 		if err != nil {
-			log.Printf("[Metadata] Cover not found for %s: %v", id, err)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Cover not found"})
+			log.Printf("[Metadata] Cover not found for %s: %v", resolvedID, err)
+			SendSubsonicError(c, ErrDataNotFound, "Cover not found")
 			return
 		}
 
@@ -186,13 +152,61 @@ func (h *MetadataHandler) GetCoverArt(c *gin.Context) {
 		resp, err := http.Get(url)
 		if err != nil {
 			log.Printf("[Metadata] Failed to fetch cover from %s: %v", url, err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch cover"})
+			SendSubsonicError(c, ErrGeneric, "Failed to fetch cover")
 			return
 		}
 		defer resp.Body.Close()
 
 		log.Printf("[Metadata] Proxying cover from %s (Size: %d, Type: %s)", url, resp.ContentLength, resp.Header.Get("Content-Type"))
 		c.DataFromReader(http.StatusOK, resp.ContentLength, resp.Header.Get("Content-Type"), resp.Body, nil)
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetOpenSubsonicExtensions(c *gin.Context) {
+	resp := subsonic.Response{
+		Status:  "ok",
+		Version: "1.16.1",
+		OpenSubsonicExtensions: &subsonic.OpenSubsonicExtensions{
+			Extension: []subsonic.OpenSubsonicExtension{
+				{Name: "songLyrics", Versions: []string{"1"}},
+				{Name: "formPost", Versions: []string{"1"}},
+				{Name: "transcoding", Versions: []string{"1"}},
+			},
+		},
+	}
+
+	SendSubsonicResponse(c, resp)
+}
+
+func (h *MetadataHandler) GetLyrics(c *gin.Context) {
+	// Legacy Subsonic getLyrics.view
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetLyricsBySongId(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	resolvedID, isVirtual, _ := ResolveVirtualID(c, h.proxyHandler, h.squidService, id)
+
+	if isVirtual {
+		lyrics, err := h.squidService.GetLyrics(resolvedID)
+		if err != nil {
+			log.Printf("[Metadata] Lyrics not found for %s: %v", resolvedID, err)
+			SendSubsonicResponse(c, subsonic.Response{
+				Status:  "ok",
+				Version: "1.16.1",
+			})
+			return
+		}
+
+		SendSubsonicResponse(c, subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.2",
+			Lyrics: &subsonic.Lyrics{
+				Value: lyrics,
+			},
+		})
 		return
 	}
 	h.proxyHandler.Handle(c)
