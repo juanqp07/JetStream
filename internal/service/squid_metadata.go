@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -265,53 +266,83 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 	}
 	numericID := parts[3]
 
-	// 1. Fetch Artist Metadata (to get picture/name correctly)
-	metaURL := fmt.Sprintf("%s/artist/?id=%s", s.getCurrentURL(), numericID)
-	reqMeta, _ := http.NewRequest("GET", metaURL, nil)
-	reqMeta.Header.Set("User-Agent", UserAgent)
-	respMeta, err := s.client.Do(reqMeta)
-
-	var artistName string
-	if err == nil && respMeta.StatusCode == http.StatusOK {
-		var metaResult struct {
+	// Parallel Requests
+	var (
+		artistName string
+		items      []struct {
+			ID     int64  `json:"id"`
+			Title  string `json:"title"`
 			Artist struct {
-				Name    string `json:"name"`
-				Picture string `json:"picture"`
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
 			} `json:"artist"`
 		}
-		json.NewDecoder(respMeta.Body).Decode(&metaResult)
-		artistName = metaResult.Artist.Name
-		respMeta.Body.Close()
-	}
+		wg sync.WaitGroup
+	)
+
+	wg.Add(2)
+
+	// 1. Fetch Artist Metadata
+	go func() {
+		defer wg.Done()
+		metaURL := fmt.Sprintf("%s/artist/?id=%s", s.getCurrentURL(), numericID)
+		reqMeta, _ := http.NewRequest("GET", metaURL, nil)
+		reqMeta.Header.Set("User-Agent", UserAgent)
+		respMeta, err := s.client.Do(reqMeta)
+
+		if err == nil && respMeta.StatusCode == http.StatusOK {
+			var metaResult struct {
+				Artist struct {
+					Name    string `json:"name"`
+					Picture string `json:"picture"`
+				} `json:"artist"`
+			}
+			json.NewDecoder(respMeta.Body).Decode(&metaResult)
+			artistName = metaResult.Artist.Name
+			respMeta.Body.Close()
+		}
+	}()
 
 	// 2. Fetch Artist Albums
-	urlStr := fmt.Sprintf("%s/artist/?f=%s", s.getCurrentURL(), numericID)
-	req, _ := http.NewRequest("GET", urlStr, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
+	var errAlbums error
+	go func() {
+		defer wg.Done()
+		urlStr := fmt.Sprintf("%s/artist/?f=%s", s.getCurrentURL(), numericID)
+		req, _ := http.NewRequest("GET", urlStr, nil)
+		req.Header.Set("User-Agent", UserAgent)
+		resp, err := s.client.Do(req)
+		if err != nil {
+			errAlbums = err
+			return
+		}
+		defer resp.Body.Close()
 
-	var result struct {
-		Albums struct {
-			Items []struct {
-				ID     int64  `json:"id"`
-				Title  string `json:"title"`
-				Artist struct {
-					ID   int64  `json:"id"`
-					Name string `json:"name"`
-				} `json:"artist"`
-			} `json:"items"`
-		} `json:"albums"`
+		var result struct {
+			Albums struct {
+				Items []struct {
+					ID     int64  `json:"id"`
+					Title  string `json:"title"`
+					Artist struct {
+						ID   int64  `json:"id"`
+						Name string `json:"name"`
+					} `json:"artist"`
+				} `json:"items"`
+			} `json:"albums"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			errAlbums = err
+			return
+		}
+		items = result.Albums.Items
+	}()
+
+	wg.Wait()
+
+	if errAlbums != nil {
+		return nil, nil, errAlbums
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil, err
-	}
-
-	items := result.Albums.Items
 	if artistName == "" && len(items) > 0 {
 		artistName = items[0].Artist.Name
 	}
@@ -324,13 +355,22 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 	}
 
 	var albums []subsonic.Album
+	seenAlbums := make(map[string]bool)
+
 	for _, alb := range items {
+		albumID := subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", alb.ID))
+		if seenAlbums[albumID] {
+			continue
+		}
+		seenAlbums[albumID] = true
+
 		albums = append(albums, subsonic.Album{
-			ID:       subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", alb.ID)),
+			ID:       albumID,
 			Title:    alb.Title,
 			Name:     alb.Title,
 			Artist:   artistName,
 			ArtistID: artist.ID,
+			CoverArt: albumID, // Explicitly set CoverArt to Album ID
 		})
 	}
 
@@ -361,20 +401,17 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 		return nil, nil, fmt.Errorf("playlist not found or api error")
 	}
 
-	var rawResponse json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&rawResponse); err != nil {
-		return nil, nil, err
-	}
-
-	// Double check the response structure (some versions might omit .data)
+	// Correct structure: Root has "playlist" and "items"
 	var result struct {
-		Data struct {
+		Playlist struct {
 			UUID           string `json:"uuid"`
 			Title          string `json:"title"`
 			SquareImage    string `json:"squareImage"`
 			NumberOfTracks int    `json:"numberOfTracks"`
 			Duration       int    `json:"duration"`
-			Items          []struct {
+		} `json:"playlist"`
+		Items []struct {
+			Item struct {
 				ID          int64  `json:"id"`
 				Title       string `json:"title"`
 				Duration    int    `json:"duration"`
@@ -387,27 +424,19 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 					ID    int64  `json:"id"`
 					Title string `json:"title"`
 				} `json:"album"`
-			} `json:"items"`
-		} `json:"data"`
+			} `json:"item"`
+		} `json:"items"`
 	}
 
-	if err := json.Unmarshal(rawResponse, &result); err != nil {
-		// Try without .data wrapper just in case
-		var directResult struct {
-			UUID           string        `json:"uuid"`
-			Title          string        `json:"title"`
-			NumberOfTracks int           `json:"numberOfTracks"`
-			Items          []interface{} `json:"items"`
-		}
-		if err2 := json.Unmarshal(rawResponse, &directResult); err2 == nil && directResult.UUID != "" {
-			log.Printf("[Squid] [WARNING] Playlist response was direct (no .data wrapper)")
-			// Handle direct if needed, but for now just fail with clear log
-			log.Printf("[Squid] [DEBUG] RAW: %s", string(rawResponse))
-		}
-		return nil, nil, fmt.Errorf("failed to parse playlist response: %v", err)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil, err
 	}
 
-	data := result.Data
+	data := result.Playlist
+	if data.UUID == "" {
+		return nil, nil, fmt.Errorf("playlist not found (empty uuid)")
+	}
+
 	playlist := &subsonic.Playlist{
 		ID:        subsonic.BuildID("squidwtf", "playlist", data.UUID),
 		Name:      data.Title,
@@ -417,7 +446,8 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 	}
 
 	var songs []subsonic.Song
-	for _, item := range data.Items {
+	for _, wrapper := range result.Items {
+		item := wrapper.Item
 		songs = append(songs, subsonic.Song{
 			ID:          subsonic.BuildID("squidwtf", "song", fmt.Sprintf("%d", item.ID)),
 			Parent:      subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
@@ -555,18 +585,18 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 		defer resp.Body.Close()
 
 		var result struct {
-			Data struct {
+			Playlist struct {
 				SquareImage string `json:"squareImage"`
-			} `json:"data"`
+			} `json:"playlist"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			return "", err
 		}
 
-		if result.Data.SquareImage == "" {
+		if result.Playlist.SquareImage == "" {
 			return "", fmt.Errorf("no cover art for playlist")
 		}
-		imgUuid := strings.ToLower(strings.ReplaceAll(result.Data.SquareImage, "-", "/"))
+		imgUuid := strings.ToLower(strings.ReplaceAll(result.Playlist.SquareImage, "-", "/"))
 		coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", imgUuid)
 	} else {
 		return "", fmt.Errorf("unsupported type for cover")

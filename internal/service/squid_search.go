@@ -336,6 +336,8 @@ func (s *SquidService) fetchPlaylists(urlStr string) ([]subsonic.Playlist, error
 			Duration:  item.Duration,
 			Created:   item.Created,
 			CoverArt:  subsonic.BuildID("squidwtf", "playlist", item.UUID),
+			Owner:     "Tidal",
+			Public:    true,
 		})
 	}
 	return playlists, nil
