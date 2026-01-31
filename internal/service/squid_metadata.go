@@ -14,29 +14,51 @@ import (
 
 // GetLyrics fetches lyrics for a track ID
 func (s *SquidService) GetLyrics(ctx context.Context, id string) (string, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("lyrics:%s", id)
+
+	// Check Cache
+	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil && val != "" {
+		return val, nil
+	}
+
 	_, _, _, numericID := subsonic.ParseID(id)
 
-	urlStr := fmt.Sprintf("%s/lyrics/?id=%s", s.getCurrentURL(), numericID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := s.client.Do(req)
+	var lyrics string
+	err := s.tryWithFallback(ctx, func(baseURL string) error {
+		urlStr := fmt.Sprintf("%s/lyrics/?id=%s", baseURL, numericID)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+		req.Header.Set("User-Agent", UserAgent)
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+
+		var result struct {
+			Data string `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return err
+		}
+
+		lyrics = result.Data
+		return nil
+	})
+
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("lyrics not found")
+	// Cache Result
+	if lyrics != "" {
+		s.redis.Set(ctx, cacheKey, lyrics, 7*24*time.Hour)
 	}
 
-	var result struct {
-		Data string `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-
-	return result.Data, nil
+	return lyrics, nil
 }
 
 // GetSong fetches song details from Squid
@@ -53,65 +75,79 @@ func (s *SquidService) GetSong(ctx context.Context, id string) (*subsonic.Song, 
 
 	_, _, _, numericID := subsonic.ParseID(id)
 
-	// Try /info/ first for clean metadata
-	urlStr := fmt.Sprintf("%s/info/?id=%s", s.getCurrentURL(), numericID)
-	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := s.client.Do(req)
-
-	if err != nil || resp.StatusCode != http.StatusOK {
-		// Fallback to /track/ if /info/ fails
-		slog.Warn("/info/ failed, trying /track/", "numericID", numericID)
-		urlStr = fmt.Sprintf("%s/track/?id=%s", s.getCurrentURL(), numericID)
-		req, _ = http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+	var song *subsonic.Song
+	err := s.tryWithFallback(ctx, func(baseURL string) error {
+		// Try /info/ first for clean metadata
+		urlStr := fmt.Sprintf("%s/info/?id=%s", baseURL, numericID)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
-		resp, err = s.client.Do(req)
+		resp, err := s.client.Do(req)
+
 		if err != nil || resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("failed to fetch song info from both /info/ and /track/")
+			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+				return fmt.Errorf("HTTP 429")
+			}
+			// Fallback to /track/ if /info/ fails
+			slog.Warn("/info/ failed, trying /track/", "numericID", numericID)
+			urlStr = fmt.Sprintf("%s/track/?id=%s", baseURL, numericID)
+			req, _ = http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+			req.Header.Set("User-Agent", UserAgent)
+			resp, err = s.client.Do(req)
+			if err != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch song info from both /info/ and /track/")
+			}
 		}
-	}
-	defer resp.Body.Close()
+		defer resp.Body.Close()
 
-	// Parse Response
-	var result struct {
-		Data struct {
-			ID          int64  `json:"id"`
-			Title       string `json:"title"`
-			Duration    int    `json:"duration"`
-			TrackNumber int    `json:"trackNumber"`
-			Artist      struct {
-				ID   int64  `json:"id"`
-				Name string `json:"name"`
-			} `json:"artist"`
-			Album struct {
-				ID    int64  `json:"id"`
-				Title string `json:"title"`
-				Cover string `json:"cover"`
-			} `json:"album"`
-		} `json:"data"`
-	}
+		// Parse Response
+		var result struct {
+			Data struct {
+				ID          int64  `json:"id"`
+				Title       string `json:"title"`
+				Duration    int    `json:"duration"`
+				TrackNumber int    `json:"trackNumber"`
+				Artist      struct {
+					ID   int64  `json:"id"`
+					Name string `json:"name"`
+				} `json:"artist"`
+				Album struct {
+					ID    int64  `json:"id"`
+					Title string `json:"title"`
+					Cover string `json:"cover"`
+				} `json:"album"`
+			} `json:"data"`
+		}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return err
+		}
+
+		item := result.Data
+		song = &subsonic.Song{
+			ID:          subsonic.BuildID("squidwtf", "song", fmt.Sprintf("%d", item.ID)),
+			Parent:      subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+			Title:       item.Title,
+			Artist:      item.Artist.Name,
+			ArtistID:    subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
+			Album:       item.Album.Title,
+			AlbumID:     subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+			CoverArt:    subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+			Duration:    item.Duration,
+			Track:       item.TrackNumber,
+			Suffix:      "mp3",
+			ContentType: "audio/mpeg",
+			IsDir:       false,
+			IsVideo:     false,
+			Path:        fmt.Sprintf("squidwtf/%s/%s/%d.mp3", item.Artist.Name, item.Album.Title, item.ID),
+		}
+		return nil
+	})
+
+	if err != nil {
 		return nil, err
-	}
-
-	item := result.Data
-	song := &subsonic.Song{
-		ID:          subsonic.BuildID("squidwtf", "song", fmt.Sprintf("%d", item.ID)),
-		Parent:      subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
-		Title:       item.Title,
-		Artist:      item.Artist.Name,
-		ArtistID:    subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
-		Album:       item.Album.Title,
-		AlbumID:     subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
-		CoverArt:    subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
-		Duration:    item.Duration,
-		Track:       item.TrackNumber,
-		Suffix:      "mp3",
-		ContentType: "audio/mpeg",
-		IsDir:       false,
-		IsVideo:     false,
-		Path:        fmt.Sprintf("squidwtf/%s/%s/%d.mp3", item.Artist.Name, item.Album.Title, item.ID),
 	}
 
 	// Cache Result
@@ -143,7 +179,7 @@ func (s *SquidService) GetAlbum(ctx context.Context, id string) (*subsonic.Album
 	var album *subsonic.Album
 	var songs []subsonic.Song
 
-	err := s.tryWithFallback(func(baseURL string) error {
+	err := s.tryWithFallback(ctx, func(baseURL string) error {
 		urlStr := fmt.Sprintf("%s/album/?id=%s", baseURL, numericID)
 
 		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
@@ -278,14 +314,24 @@ func (s *SquidService) GetArtist(ctx context.Context, id string) (*subsonic.Arti
 	wg.Add(2)
 
 	// 1. Fetch Artist Metadata
+	var metaErr error
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		metaURL := fmt.Sprintf("%s/artist/?id=%s", s.getCurrentURL(), numericID)
-		reqMeta, _ := http.NewRequestWithContext(ctx, "GET", metaURL, nil)
-		reqMeta.Header.Set("User-Agent", UserAgent)
-		respMeta, err := s.client.Do(reqMeta)
+		metaErr = s.tryWithFallback(ctx, func(baseURL string) error {
+			metaURL := fmt.Sprintf("%s/artist/?id=%s", baseURL, numericID)
+			reqMeta, _ := http.NewRequestWithContext(ctx, "GET", metaURL, nil)
+			reqMeta.Header.Set("User-Agent", UserAgent)
+			respMeta, err := s.client.Do(reqMeta)
 
-		if err == nil && respMeta.StatusCode == http.StatusOK {
+			if err != nil || respMeta.StatusCode != http.StatusOK {
+				if respMeta != nil && respMeta.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch artist metadata")
+			}
+			defer respMeta.Body.Close()
+
 			var metaResult struct {
 				Artist struct {
 					Name    string `json:"name"`
@@ -294,48 +340,54 @@ func (s *SquidService) GetArtist(ctx context.Context, id string) (*subsonic.Arti
 			}
 			json.NewDecoder(respMeta.Body).Decode(&metaResult)
 			artistName = metaResult.Artist.Name
-			respMeta.Body.Close()
-		}
+			return nil
+		})
 	}()
 
 	// 2. Fetch Artist Albums
 	var errAlbums error
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		urlStr := fmt.Sprintf("%s/artist/?f=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-		req.Header.Set("User-Agent", UserAgent)
-		resp, err := s.client.Do(req)
-		if err != nil {
-			errAlbums = err
-			return
-		}
-		defer resp.Body.Close()
+		errAlbums = s.tryWithFallback(ctx, func(baseURL string) error {
+			urlStr := fmt.Sprintf("%s/artist/?f=%s", baseURL, numericID)
+			req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+			req.Header.Set("User-Agent", UserAgent)
+			resp, err := s.client.Do(req)
+			if err != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch artist albums")
+			}
+			defer resp.Body.Close()
 
-		var result struct {
-			Albums struct {
-				Items []struct {
-					ID     int64  `json:"id"`
-					Title  string `json:"title"`
-					Artist struct {
-						ID   int64  `json:"id"`
-						Name string `json:"name"`
-					} `json:"artist"`
-				} `json:"items"`
-			} `json:"albums"`
-		}
+			var result struct {
+				Albums struct {
+					Items []struct {
+						ID     int64  `json:"id"`
+						Title  string `json:"title"`
+						Artist struct {
+							ID   int64  `json:"id"`
+							Name string `json:"name"`
+						} `json:"artist"`
+					} `json:"items"`
+				} `json:"albums"`
+			}
 
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			errAlbums = err
-			return
-		}
-		items = result.Albums.Items
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return err
+			}
+			items = result.Albums.Items
+			return nil
+		})
 	}()
 
 	wg.Wait()
 
-	if errAlbums != nil {
-		return nil, nil, errAlbums
+	if metaErr != nil || errAlbums != nil {
+		slog.Error("Failed to fetch artist info", "metaErr", metaErr, "albumsErr", errAlbums)
+		return nil, nil, fmt.Errorf("failed to fetch artist info")
 	}
 
 	if artistName == "" && len(items) > 0 {
@@ -392,84 +444,91 @@ func (s *SquidService) GetPlaylist(ctx context.Context, id string) (*subsonic.Pl
 
 	_, _, _, uuid := subsonic.ParseID(id)
 
-	urlStr := fmt.Sprintf("%s/playlist/?id=%s", s.getCurrentURL(), uuid)
-	slog.Debug("Squid Playlist Request", "url", urlStr)
-	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := s.client.Do(req)
+	var playlist *subsonic.Playlist
+	var songs []subsonic.Song
+	err := s.tryWithFallback(ctx, func(baseURL string) error {
+		urlStr := fmt.Sprintf("%s/playlist/?id=%s", baseURL, uuid)
+		slog.Debug("Squid Playlist Request", "url", urlStr)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+		req.Header.Set("User-Agent", UserAgent)
+		resp, err := s.client.Do(req)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+				return fmt.Errorf("HTTP 429")
+			}
+			return fmt.Errorf("playlist not found or api error")
+		}
+		defer resp.Body.Close()
+
+		// Correct structure: Root has "playlist" and "items"
+		var result struct {
+			Playlist struct {
+				UUID           string `json:"uuid"`
+				Title          string `json:"title"`
+				SquareImage    string `json:"squareImage"`
+				NumberOfTracks int    `json:"numberOfTracks"`
+				Duration       int    `json:"duration"`
+			} `json:"playlist"`
+			Items []struct {
+				Item struct {
+					ID          int64  `json:"id"`
+					Title       string `json:"title"`
+					Duration    int    `json:"duration"`
+					TrackNumber int    `json:"trackNumber"`
+					Artist      struct {
+						ID   int64  `json:"id"`
+						Name string `json:"name"`
+					} `json:"artist"`
+					Album struct {
+						ID    int64  `json:"id"`
+						Title string `json:"title"`
+					} `json:"album"`
+				} `json:"item"`
+			} `json:"items"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return err
+		}
+
+		data := result.Playlist
+		if data.UUID == "" {
+			return fmt.Errorf("playlist not found (empty uuid)")
+		}
+
+		playlist = &subsonic.Playlist{
+			ID:        subsonic.BuildID("squidwtf", "playlist", data.UUID),
+			Name:      data.Title,
+			SongCount: data.NumberOfTracks,
+			Duration:  data.Duration,
+			CoverArt:  subsonic.BuildID("squidwtf", "playlist", data.UUID),
+		}
+
+		songs = []subsonic.Song{}
+		for _, wrapper := range result.Items {
+			item := wrapper.Item
+			songs = append(songs, subsonic.Song{
+				ID:          subsonic.BuildID("squidwtf", "song", fmt.Sprintf("%d", item.ID)),
+				Parent:      subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+				Title:       item.Title,
+				Artist:      item.Artist.Name,
+				ArtistID:    subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
+				Album:       item.Album.Title,
+				AlbumID:     subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+				CoverArt:    subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
+				Duration:    item.Duration,
+				Track:       item.TrackNumber,
+				Suffix:      "mp3",
+				ContentType: "audio/mpeg",
+				IsDir:       false,
+				IsVideo:     false,
+			})
+		}
+		return nil
+	})
+
 	if err != nil {
 		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		slog.Error("Playlist API returned error", "status", resp.StatusCode)
-		return nil, nil, fmt.Errorf("playlist not found or api error")
-	}
-
-	// Correct structure: Root has "playlist" and "items"
-	var result struct {
-		Playlist struct {
-			UUID           string `json:"uuid"`
-			Title          string `json:"title"`
-			SquareImage    string `json:"squareImage"`
-			NumberOfTracks int    `json:"numberOfTracks"`
-			Duration       int    `json:"duration"`
-		} `json:"playlist"`
-		Items []struct {
-			Item struct {
-				ID          int64  `json:"id"`
-				Title       string `json:"title"`
-				Duration    int    `json:"duration"`
-				TrackNumber int    `json:"trackNumber"`
-				Artist      struct {
-					ID   int64  `json:"id"`
-					Name string `json:"name"`
-				} `json:"artist"`
-				Album struct {
-					ID    int64  `json:"id"`
-					Title string `json:"title"`
-				} `json:"album"`
-			} `json:"item"`
-		} `json:"items"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil, err
-	}
-
-	data := result.Playlist
-	if data.UUID == "" {
-		return nil, nil, fmt.Errorf("playlist not found (empty uuid)")
-	}
-
-	playlist := &subsonic.Playlist{
-		ID:        subsonic.BuildID("squidwtf", "playlist", data.UUID),
-		Name:      data.Title,
-		SongCount: data.NumberOfTracks,
-		Duration:  data.Duration,
-		CoverArt:  subsonic.BuildID("squidwtf", "playlist", data.UUID),
-	}
-
-	var songs []subsonic.Song
-	for _, wrapper := range result.Items {
-		item := wrapper.Item
-		songs = append(songs, subsonic.Song{
-			ID:          subsonic.BuildID("squidwtf", "song", fmt.Sprintf("%d", item.ID)),
-			Parent:      subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
-			Title:       item.Title,
-			Artist:      item.Artist.Name,
-			ArtistID:    subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
-			Album:       item.Album.Title,
-			AlbumID:     subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
-			CoverArt:    subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
-			Duration:    item.Duration,
-			Track:       item.TrackNumber,
-			Suffix:      "mp3",
-			ContentType: "audio/mpeg",
-			IsDir:       false,
-			IsVideo:     false,
-		})
 	}
 
 	// Cache Result
@@ -499,29 +558,35 @@ func (s *SquidService) GetCoverURL(ctx context.Context, id string) (string, erro
 		}
 		numericID := parts[3]
 
-		urlStr := fmt.Sprintf("%s/album/?id=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-		req.Header.Set("User-Agent", UserAgent)
-		resp, err2 := s.client.Do(req)
-		if err2 != nil {
-			return "", err2
-		}
-		defer resp.Body.Close()
+		err = s.tryWithFallback(ctx, func(baseURL string) error {
+			urlStr := fmt.Sprintf("%s/album/?id=%s", baseURL, numericID)
+			req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+			req.Header.Set("User-Agent", UserAgent)
+			resp, err2 := s.client.Do(req)
+			if err2 != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch album cover info")
+			}
+			defer resp.Body.Close()
 
-		var result struct {
-			Data struct {
-				Cover string `json:"cover"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", err
-		}
+			var result struct {
+				Data struct {
+					Cover string `json:"cover"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return err
+			}
 
-		if result.Data.Cover == "" {
-			return "", fmt.Errorf("no cover art for album")
-		}
-		uuid := strings.ToLower(strings.ReplaceAll(result.Data.Cover, "-", "/"))
-		coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", uuid)
+			if result.Data.Cover == "" {
+				return fmt.Errorf("no cover art for album")
+			}
+			uuid := strings.ToLower(strings.ReplaceAll(result.Data.Cover, "-", "/"))
+			coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", uuid)
+			return nil
+		})
 	} else if strings.Contains(id, "-song-") {
 		parts := strings.Split(id, "-")
 		if len(parts) < 4 {
@@ -529,31 +594,37 @@ func (s *SquidService) GetCoverURL(ctx context.Context, id string) (string, erro
 		}
 		numericID := parts[3]
 
-		urlStr := fmt.Sprintf("%s/info/?id=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-		req.Header.Set("User-Agent", UserAgent)
-		resp, err2 := s.client.Do(req)
-		if err2 != nil {
-			return "", err2
-		}
-		defer resp.Body.Close()
+		err = s.tryWithFallback(ctx, func(baseURL string) error {
+			urlStr := fmt.Sprintf("%s/info/?id=%s", baseURL, numericID)
+			req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+			req.Header.Set("User-Agent", UserAgent)
+			resp, err2 := s.client.Do(req)
+			if err2 != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch song cover info")
+			}
+			defer resp.Body.Close()
 
-		var result struct {
-			Data struct {
-				Album struct {
-					Cover string `json:"cover"`
-				} `json:"album"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", err
-		}
+			var result struct {
+				Data struct {
+					Album struct {
+						Cover string `json:"cover"`
+					} `json:"album"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return err
+			}
 
-		if result.Data.Album.Cover == "" {
-			return "", fmt.Errorf("no cover art for song/album")
-		}
-		uuid := strings.ToLower(strings.ReplaceAll(result.Data.Album.Cover, "-", "/"))
-		coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", uuid)
+			if result.Data.Album.Cover == "" {
+				return fmt.Errorf("no cover art for song/album")
+			}
+			uuid := strings.ToLower(strings.ReplaceAll(result.Data.Album.Cover, "-", "/"))
+			coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", uuid)
+			return nil
+		})
 	} else if strings.Contains(id, "-artist-") {
 		parts := strings.Split(id, "-")
 		if len(parts) < 4 {
@@ -561,54 +632,66 @@ func (s *SquidService) GetCoverURL(ctx context.Context, id string) (string, erro
 		}
 		numericID := parts[3]
 
-		urlStr := fmt.Sprintf("%s/artist/?id=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-		req.Header.Set("User-Agent", UserAgent)
-		resp, err2 := s.client.Do(req)
-		if err2 != nil {
-			return "", err2
-		}
-		defer resp.Body.Close()
+		err = s.tryWithFallback(ctx, func(baseURL string) error {
+			urlStr := fmt.Sprintf("%s/artist/?id=%s", baseURL, numericID)
+			req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+			req.Header.Set("User-Agent", UserAgent)
+			resp, err2 := s.client.Do(req)
+			if err2 != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch artist cover info")
+			}
+			defer resp.Body.Close()
 
-		var result struct {
-			Artist struct {
-				Picture string `json:"picture"`
-			} `json:"artist"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", err
-		}
+			var result struct {
+				Artist struct {
+					Picture string `json:"picture"`
+				} `json:"artist"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return err
+			}
 
-		if result.Artist.Picture == "" {
-			return "", fmt.Errorf("no picture for artist")
-		}
-		uuid := strings.ToLower(strings.ReplaceAll(result.Artist.Picture, "-", "/"))
-		coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", uuid)
+			if result.Artist.Picture == "" {
+				return fmt.Errorf("no picture for artist")
+			}
+			uuid := strings.ToLower(strings.ReplaceAll(result.Artist.Picture, "-", "/"))
+			coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", uuid)
+			return nil
+		})
 	} else if strings.Contains(id, "-playlist-") {
 		_, _, _, uuid := subsonic.ParseID(id)
-		urlStr := fmt.Sprintf("%s/playlist/?id=%s", s.getCurrentURL(), uuid)
-		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-		req.Header.Set("User-Agent", UserAgent)
-		resp, err2 := s.client.Do(req)
-		if err2 != nil {
-			return "", err2
-		}
-		defer resp.Body.Close()
+		err = s.tryWithFallback(ctx, func(baseURL string) error {
+			urlStr := fmt.Sprintf("%s/playlist/?id=%s", baseURL, uuid)
+			req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+			req.Header.Set("User-Agent", UserAgent)
+			resp, err2 := s.client.Do(req)
+			if err2 != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+					return fmt.Errorf("HTTP 429")
+				}
+				return fmt.Errorf("failed to fetch playlist cover info")
+			}
+			defer resp.Body.Close()
 
-		var result struct {
-			Playlist struct {
-				SquareImage string `json:"squareImage"`
-			} `json:"playlist"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", err
-		}
+			var result struct {
+				Playlist struct {
+					SquareImage string `json:"squareImage"`
+				} `json:"playlist"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return err
+			}
 
-		if result.Playlist.SquareImage == "" {
-			return "", fmt.Errorf("no cover art for playlist")
-		}
-		imgUuid := strings.ToLower(strings.ReplaceAll(result.Playlist.SquareImage, "-", "/"))
-		coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", imgUuid)
+			if result.Playlist.SquareImage == "" {
+				return fmt.Errorf("no cover art for playlist")
+			}
+			imgUuid := strings.ToLower(strings.ReplaceAll(result.Playlist.SquareImage, "-", "/"))
+			coverURL = fmt.Sprintf("https://resources.tidal.com/images/%s/320x320.jpg", imgUuid)
+			return nil
+		})
 	} else {
 		return "", fmt.Errorf("unsupported type for cover")
 	}
@@ -622,39 +705,46 @@ func (s *SquidService) GetCoverURL(ctx context.Context, id string) (string, erro
 
 func (s *SquidService) GetSimilarArtists(ctx context.Context, id string) ([]subsonic.Artist, error) {
 	_, _, _, numericID := subsonic.ParseID(id)
-	urlStr := fmt.Sprintf("%s/artist/similar/?id=%s", s.getCurrentURL(), numericID)
-
-	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return []subsonic.Artist{}, nil
-	}
-
-	var result struct {
-		Artists []struct {
-			ID      int64  `json:"id"`
-			Name    string `json:"name"`
-			Picture string `json:"picture"`
-		} `json:"artists"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
 	var artists []subsonic.Artist
-	for _, item := range result.Artists {
-		artists = append(artists, subsonic.Artist{
-			ID:       subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.ID)),
-			Name:     item.Name,
-			CoverArt: subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.ID)),
-		})
+	err := s.tryWithFallback(ctx, func(baseURL string) error {
+		urlStr := fmt.Sprintf("%s/artist/similar/?id=%s", baseURL, numericID)
+
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+		req.Header.Set("User-Agent", UserAgent)
+		resp, err := s.client.Do(req)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+				return fmt.Errorf("HTTP 429")
+			}
+			return fmt.Errorf("failed to fetch similar artists")
+		}
+		defer resp.Body.Close()
+
+		var result struct {
+			Artists []struct {
+				ID      int64  `json:"id"`
+				Name    string `json:"name"`
+				Picture string `json:"picture"`
+			} `json:"artists"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return err
+		}
+
+		artists = []subsonic.Artist{}
+		for _, item := range result.Artists {
+			artists = append(artists, subsonic.Artist{
+				ID:       subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.ID)),
+				Name:     item.Name,
+				CoverArt: subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.ID)),
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		return []subsonic.Artist{}, nil
 	}
 	return artists, nil
 }

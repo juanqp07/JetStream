@@ -28,12 +28,17 @@ func Load() (*Config, error) {
 
 	// Decode fallback URLs (same as allstarr)
 	encodedURLs := []string{
-		"aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm", // triton.squid.wtf
-		"aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==", // wolf.qqdl.site
-		"aHR0cDovL2h1bmQucXFkbC5zaXRl",     // hund.qqdl.site
-		"aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==", // maus.qqdl.site
-		"aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=", // vogel.qqdl.site
-		"aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=", // katze.qqdl.site
+		"aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",             // triton.squid.wtf
+		"aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",     // Kinoplus
+		"aHR0cHM6Ly90aWRhbC1hcGkuYmluaW11bS5vcmc=",     // Binimum
+		"aHR0cHM6Ly9tb25vY2hyb21lLWFwaS5zYW1pZHkuY29t", // Monochrome
+		"aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",             // wolf.qqdl.site
+		"aHR0cDovL2h1bmQucXFkbC5zaXRl",                 // hund.qqdl.site
+		"aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",             // maus.qqdl.site
+		"aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",             // vogel.qqdl.site
+		"aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",             // katze.qqdl.site
+		"aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==", // Spotisaver 1
+		"aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==", // Spotisaver 2
 	}
 
 	// Decode URLs

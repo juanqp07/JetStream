@@ -93,14 +93,15 @@ func (s *SquidService) rotateURL() {
 }
 
 // tryWithFallback attempts the action with all available URLs
-func (s *SquidService) tryWithFallback(action func(baseURL string) error) error {
+func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL string) error) error {
 	var lastErr error
 	maxAttempts := len(s.cfg.SquidURLs)
 	if maxAttempts == 0 {
 		maxAttempts = 1
 	}
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	// We'll allow up to 3 retries per URL if it's a 429 or transient error
+	for attempt := 0; attempt < maxAttempts*2; attempt++ {
 		baseURL := s.getCurrentURL()
 		err := action(baseURL)
 		if err == nil {
@@ -108,15 +109,44 @@ func (s *SquidService) tryWithFallback(action func(baseURL string) error) error 
 		}
 
 		lastErr = err
+
+		// Detect 429
+		is429 := false
+		if err != nil && (err.Error() == "HTTP 429" || contains(err.Error(), "429")) {
+			is429 = true
+		}
+
+		if is429 {
+			backoff := time.Duration(1<<uint(attempt%3)) * time.Second
+			slog.Warn("Rate limited (429), backing off", "baseURL", baseURL, "wait", backoff)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+				// Continue after backoff
+			}
+			// If we hit 429 twice on the same URL, rotate
+			if attempt%2 == 1 {
+				s.rotateURL()
+			}
+			continue
+		}
+
 		slog.Warn("Squid request failed", "baseURL", baseURL, "error", err, "attempt", attempt+1)
 
 		if attempt < maxAttempts-1 {
 			s.rotateURL()
+			// Short sleep to avoid immediate burst after failure
+			time.Sleep(200 * time.Millisecond)
 		}
 	}
 
-	slog.Error("All fallback endpoints failed")
+	slog.Error("All fallback endpoints failed or max retries reached", "lastErr", lastErr)
 	return lastErr
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || (len(substr) > 0 && (s[:len(substr)] == substr || contains(s[1:], substr))))
 }
 
 func (s *SquidService) GetStreamURL(ctx context.Context, trackID string) (*TrackInfo, error) {
@@ -124,7 +154,7 @@ func (s *SquidService) GetStreamURL(ctx context.Context, trackID string) (*Track
 	quality := "LOSSLESS"
 
 	var trackInfo *TrackInfo
-	err := s.tryWithFallback(func(baseURL string) error {
+	err := s.tryWithFallback(ctx, func(baseURL string) error {
 		url := fmt.Sprintf("%s/track/?id=%s&quality=%s", baseURL, rawID, quality)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
