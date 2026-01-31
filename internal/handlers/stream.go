@@ -37,12 +37,12 @@ func (h *Handler) Stream(c *gin.Context) {
 	// 1. Resolve ID (Handles external IDs and Virtual indexed IDs)
 	externalID, isVirtual, err := ResolveVirtualID(c, h.proxyHandler, h.squidService, id)
 	if err != nil || !isVirtual {
-		log.Printf("[Stream] Not an external or virtual song: %s", id)
+		log.Printf("[Stream] [%s] Not an external or virtual song: %s", c.GetHeader("User-Agent"), id)
 		h.proxyHandler.Handle(c)
 		return
 	}
 
-	log.Printf("[Stream] Handling virtual/external stream: %s (Resolved: %s)", id, externalID)
+	log.Printf("[Stream] [%s] %s %s (Resolved: %s)", c.GetHeader("User-Agent"), c.Request.Method, c.Request.URL.String(), externalID)
 
 	// 2. Resolve Metadata (Check Local Library first for real or ghost files)
 	song, err := h.squidService.GetSong(externalID)
@@ -57,7 +57,7 @@ func (h *Handler) Stream(c *gin.Context) {
 
 	// New Filename Format: {Track} - [{ID}] {Title}.{ext}
 	fileName := fmt.Sprintf("%02d - [%s] %s.%s", song.Track, externalID, h.syncService.SanitizePath(song.Title), h.syncService.GetDownloadFormat())
-	localPath := filepath.Join("/music", "raid", artistDir, albumDir, fileName)
+	localPath := filepath.Join("/music", "jetstream", artistDir, albumDir, fileName)
 
 	// Ghost file check
 	ghostFileName := fmt.Sprintf("%02d - [%s] %s.mp3", song.Track, externalID, h.syncService.SanitizePath(song.Title))
@@ -65,11 +65,11 @@ func (h *Handler) Stream(c *gin.Context) {
 
 	if info, err := os.Stat(localPath); err == nil {
 		if info.Size() > 50000 { // Large enough to be real
-			log.Printf("[Stream] Serving local file from raid: %s", localPath)
+			log.Printf("[Stream] Serving local file from jetstream: %s", localPath)
 			c.File(localPath)
 			return
 		}
-		log.Printf("[Stream] Small file detected in raid at %s, treating as ghost", localPath)
+		log.Printf("[Stream] Small file detected in jetstream at %s, treating as ghost", localPath)
 	} else if info, err := os.Stat(searchResultPath); err == nil && info.Size() < 20000 {
 		log.Printf("[Stream] Ghost file detected in search folder: %s", searchResultPath)
 	}
@@ -83,7 +83,7 @@ func (h *Handler) Stream(c *gin.Context) {
 
 	// SYNC-ON-PLAY: Trigger background sync for this song
 	go func() {
-		if err := h.syncService.SyncSong(externalID); err != nil {
+		if err := h.syncService.SyncSong(song); err != nil {
 			log.Printf("[Stream] Failed to sync song %s: %v", externalID, err)
 		}
 	}()

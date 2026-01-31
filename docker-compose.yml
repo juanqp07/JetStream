@@ -11,9 +11,19 @@ services:
       - DOWNLOAD_FORMAT=${DOWNLOAD_FORMAT:-opus}
       - MUSIC_FOLDER=${MUSIC_FOLDER:-/music}
       - SEARCH_FOLDER=${SEARCH_FOLDER:-/music/search}
+      - REDIS_ADDR=redis:6379
+    depends_on:
+      - redis
     restart: unless-stopped
     volumes:
       - ./music:/music:rw
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
 
   navidrome:
     image: deluan/navidrome:latest
@@ -25,3 +35,6 @@ services:
     volumes:
       - ./data:/data:rw
       - ./music:/music:rw
+
+volumes:
+  redis_data:

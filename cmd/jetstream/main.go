@@ -94,7 +94,12 @@ func main() {
 			c.JSON(400, gin.H{"error": "id is required"})
 			return
 		}
-		if err := syncService.SyncAlbum(id); err != nil {
+		album, songs, err := squidService.GetAlbum(id)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to fetch album info: " + err.Error()})
+			return
+		}
+		if err := syncService.SyncAlbum(album, songs); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}

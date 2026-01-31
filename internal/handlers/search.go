@@ -7,6 +7,7 @@ import (
 	"jetstream/pkg/subsonic"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -46,25 +47,27 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	// A. Navidrome (Upstream)
 	go func() {
 		defer wg.Done()
-		// We act as a client to Navidrome here to parse the response
-		// Construct URL
-		u := h.cfg.NavidromeURL + c.Request.RequestURI
-		req, _ := http.NewRequest("GET", u, nil)
 
-		// Forward Auth params from original request (they are in query)
-		// Forward Headers (Auth)
+		// Force XML from Navidrome for parsing consistency
+		fURL, _ := url.Parse(h.cfg.NavidromeURL + c.Request.RequestURI)
+		q := fURL.Query()
+		q.Set("f", "xml")
+		fURL.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", fURL.String(), nil)
 		req.Header = c.Request.Header.Clone()
+		req.Header.Del("Accept-Encoding") // Let Go's http.Client handle decompression
 
 		resp, err := h.client.Do(req)
 		if err != nil {
+			log.Printf("[Search] [ERROR] Upstream request failed: %v", err)
 			return
 		}
 		defer resp.Body.Close()
 
-		// Parse XML
 		navidromeResult = &subsonic.Response{}
 		if err := xml.NewDecoder(resp.Body).Decode(navidromeResult); err != nil {
-			// Log error
+			log.Printf("[Search] [ERROR] Decoding Upstream response: %v", err)
 		}
 	}()
 
@@ -83,7 +86,7 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	if navidromeResult == nil {
 		navidromeResult = &subsonic.Response{
 			Status:        "ok",
-			Version:       "1.16.2",
+			Version:       "1.16.1",
 			SearchResult3: &subsonic.SearchResult3{},
 		}
 	}
@@ -105,20 +108,6 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 		// Append Playlists
 		navidromeResult.SearchResult3.Playlist = append(navidromeResult.SearchResult3.Playlist, squidResult.Playlist...)
 
-		// POPULATE GHOST FILES
-		go func() {
-			// persistence: Don't clear search results anymore as requested
-			/*
-				if err := h.syncService.ClearSearchCache(); err != nil {
-					log.Printf("[Search] Warning: Failed to clear search cache: %v", err)
-				}
-			*/
-			for _, song := range squidResult.Song {
-				if err := h.syncService.CreateGhostFile(&song); err != nil {
-					log.Printf("[Search] Warning: Failed to create ghost file for %s: %v", song.ID, err)
-				}
-			}
-		}()
 	} else {
 		log.Printf("[Search] Squid returned 0 results (or error) for query '%s'", query)
 	}

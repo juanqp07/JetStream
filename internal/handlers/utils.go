@@ -6,10 +6,12 @@ import (
 	"jetstream/pkg/subsonic"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bogem/id3v2/v2"
 	"github.com/gin-gonic/gin"
@@ -19,7 +21,7 @@ import (
 func SendSubsonicResponse(c *gin.Context, resp subsonic.Response) {
 	format := c.Query("f")
 	if format == "json" {
-		c.JSON(http.StatusOK, resp)
+		c.JSON(http.StatusOK, gin.H{"subsonic-response": resp})
 	} else {
 		// Default to XML, which is the standard for Subsonic
 		c.XML(http.StatusOK, resp)
@@ -30,7 +32,7 @@ func SendSubsonicResponse(c *gin.Context, resp subsonic.Response) {
 func SendSubsonicError(c *gin.Context, code int, message string) {
 	resp := subsonic.Response{
 		Status:  "failed",
-		Version: "1.16.2",
+		Version: "1.16.1",
 		Error: &subsonic.Error{
 			Code:    code,
 			Message: message,
@@ -49,8 +51,19 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 
 	log.Printf("[Resolver] [DEBUG] Attempting to resolve Navidrome ID: %s", navidromeID)
 
-	u := proxy.GetTargetURL() + "/rest/getSong.view?id=" + navidromeID + "&" + c.Request.URL.RawQuery
-	resp, err := http.Get(u)
+	// Force XML and let http.Client handle decompression
+	parsedURL, _ := url.Parse(proxy.GetTargetURL() + "/rest/getSong.view")
+	q := c.Request.URL.Query()
+	q.Set("id", navidromeID)
+	q.Set("f", "xml")
+	parsedURL.RawQuery = q.Encode()
+
+	req, _ := http.NewRequest("GET", parsedURL.String(), nil)
+	req.Header = c.Request.Header.Clone()
+	req.Header.Del("Accept-Encoding")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("[Resolver] [ERROR] Querying Navidrome: %v", err)
 		return "", false, err

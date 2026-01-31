@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"encoding/xml"
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,7 +43,7 @@ func (h *MetadataHandler) GetAlbum(c *gin.Context) {
 
 		resp := subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.2",
+			Version: "1.16.1",
 			Album: &subsonic.AlbumWithSongs{
 				Album: *album,
 				Song:  songs,
@@ -66,7 +70,7 @@ func (h *MetadataHandler) GetArtist(c *gin.Context) {
 
 		resp := subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.2",
+			Version: "1.16.1",
 			Artist: &subsonic.ArtistWithAlbums{
 				Artist: *artist,
 				Album:  albums,
@@ -93,7 +97,7 @@ func (h *MetadataHandler) GetSong(c *gin.Context) {
 
 		resp := subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.2",
+			Version: "1.16.1",
 			Song:    song,
 		}
 
@@ -130,9 +134,69 @@ func (h *MetadataHandler) GetPlaylist(c *gin.Context) {
 }
 
 func (h *MetadataHandler) GetPlaylists(c *gin.Context) {
-	// Squid doesn't have a "list all" for guest, so we return empty or proxy
-	// Navidrome will show its own playlists.
-	h.proxyHandler.Handle(c)
+	// 1. Parallel Requests
+	var navidromeResult *subsonic.Response
+	var squidPlaylists []subsonic.Playlist
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	// A. Navidrome (Upstream)
+	go func() {
+		defer wg.Done()
+		u, _ := url.Parse(h.proxyHandler.GetTargetURL() + "/rest/getPlaylists.view")
+		q := c.Request.URL.Query()
+		q.Set("f", "xml")
+		u.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", u.String(), nil)
+		req.Header = c.Request.Header.Clone()
+		req.Header.Del("Accept-Encoding")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+
+		navidromeResult = &subsonic.Response{}
+		if err := xml.NewDecoder(resp.Body).Decode(navidromeResult); err != nil {
+			log.Printf("[Metadata] [ERROR] Decoding Upstream playlists: %v", err)
+		}
+	}()
+
+	// B. Squid (External - Featured/Popular)
+	go func() {
+		defer wg.Done()
+		// Since there's no "list all", we show a few featured ones or just leave it
+		// For now, let's try a default search for "Featured" to populate some
+		res, err := h.squidService.Search("Featured")
+		if err == nil && res != nil {
+			squidPlaylists = res.Playlist
+		}
+	}()
+
+	wg.Wait()
+
+	// 2. Merge Results
+	if navidromeResult == nil {
+		navidromeResult = &subsonic.Response{
+			Status:    "ok",
+			Version:   "1.16.1",
+			Playlists: &subsonic.Playlists{},
+		}
+	}
+
+	if navidromeResult.Playlists == nil {
+		navidromeResult.Playlists = &subsonic.Playlists{}
+	}
+
+	// Append external playlists
+	navidromeResult.Playlists.Playlist = append(navidromeResult.Playlists.Playlist, squidPlaylists...)
+
+	// 3. Return Response
+	SendSubsonicResponse(c, *navidromeResult)
 }
 
 func (h *MetadataHandler) GetCoverArt(c *gin.Context) {
@@ -148,14 +212,25 @@ func (h *MetadataHandler) GetCoverArt(c *gin.Context) {
 			return
 		}
 
-		// Fetch and Proxy
-		resp, err := http.Get(url)
+		// Fetch and Proxy with proper User-Agent to avoid 403
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("User-Agent", service.UserAgent)
+		req.Header.Set("Accept", "image/*,*/*")
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("[Metadata] Failed to fetch cover from %s: %v", url, err)
 			SendSubsonicError(c, ErrGeneric, "Failed to fetch cover")
 			return
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("[Metadata] Cover server returned %d for %s", resp.StatusCode, url)
+			SendSubsonicError(c, ErrDataNotFound, "Cover not found")
+			return
+		}
 
 		log.Printf("[Metadata] Proxying cover from %s (Size: %d, Type: %s)", url, resp.ContentLength, resp.Header.Get("Content-Type"))
 		c.DataFromReader(http.StatusOK, resp.ContentLength, resp.Header.Get("Content-Type"), resp.Body, nil)
@@ -202,7 +277,7 @@ func (h *MetadataHandler) GetLyricsBySongId(c *gin.Context) {
 
 		SendSubsonicResponse(c, subsonic.Response{
 			Status:  "ok",
-			Version: "1.16.2",
+			Version: "1.16.1",
 			Lyrics: &subsonic.Lyrics{
 				Value: lyrics,
 			},

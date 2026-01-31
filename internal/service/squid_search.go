@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"jetstream/pkg/subsonic"
@@ -8,10 +9,22 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 )
 
 // Search performs a search on triton.squid.wtf and maps to Subsonic models
 func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("search:%s", query)
+
+	// Check Cache
+	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
+		var res subsonic.SearchResult3
+		if err := json.Unmarshal([]byte(val), &res); err == nil {
+			return &res, nil
+		}
+	}
+
 	var (
 		songs     []subsonic.Song
 		albums    []subsonic.Album
@@ -25,7 +38,7 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 	// 1. Search Songs
 	go func() {
 		defer wg.Done()
-		songURL := fmt.Sprintf("%s/search/?s=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		songURL := fmt.Sprintf("%s/search/?s=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
 		songs, err = s.fetchSongs(songURL)
 		if err != nil {
@@ -36,7 +49,7 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 	// 2. Search Albums
 	go func() {
 		defer wg.Done()
-		albumURL := fmt.Sprintf("%s/search/?al=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		albumURL := fmt.Sprintf("%s/search/?al=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
 		albums, err = s.fetchAlbums(albumURL)
 		if err != nil {
@@ -47,7 +60,7 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 	// 3. Search Artists
 	go func() {
 		defer wg.Done()
-		artistURL := fmt.Sprintf("%s/search/?a=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		artistURL := fmt.Sprintf("%s/search/?a=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
 		artists, err = s.fetchArtists(artistURL)
 		if err != nil {
@@ -58,7 +71,7 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 	// 4. Search Playlists
 	go func() {
 		defer wg.Done()
-		playlistURL := fmt.Sprintf("%s/search/?p=%s", s.cfg.SquidURL, url.QueryEscape(query))
+		playlistURL := fmt.Sprintf("%s/search/?p=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
 		playlists, err = s.fetchPlaylists(playlistURL)
 		if err != nil {
@@ -68,12 +81,19 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 
 	wg.Wait()
 
-	return &subsonic.SearchResult3{
+	res := &subsonic.SearchResult3{
 		Song:     songs,
 		Album:    albums,
 		Artist:   artists,
 		Playlist: playlists,
-	}, nil
+	}
+
+	// Cache Result
+	if data, err := json.Marshal(res); err == nil {
+		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+	}
+
+	return res, nil
 }
 
 // SearchOne attempts to find a single song ID matching the artist and title.
@@ -151,6 +171,7 @@ func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
 			CoverArt:    subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.Album.ID)),
 			Duration:    item.Duration,
 			Track:       item.TrackNumber,
+			BitRate:     320,
 			Suffix:      "mp3",
 			ContentType: "audio/mpeg",
 			IsDir:       false,
@@ -290,6 +311,7 @@ func (s *SquidService) fetchPlaylists(urlStr string) ([]subsonic.Playlist, error
 				Items []struct {
 					UUID           string `json:"uuid"`
 					Title          string `json:"title"`
+					SquareImage    string `json:"squareImage"`
 					NumberOfTracks int    `json:"numberOfTracks"`
 					Duration       int    `json:"duration"`
 					Created        string `json:"created"`
@@ -313,6 +335,7 @@ func (s *SquidService) fetchPlaylists(urlStr string) ([]subsonic.Playlist, error
 			SongCount: item.NumberOfTracks,
 			Duration:  item.Duration,
 			Created:   item.Created,
+			CoverArt:  subsonic.BuildID("squidwtf", "playlist", item.UUID),
 		})
 	}
 	return playlists, nil

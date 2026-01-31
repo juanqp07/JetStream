@@ -4,7 +4,7 @@ import "encoding/xml"
 
 // Response wraps the top-level subsonic-response
 type Response struct {
-	XMLName                xml.Name                `xml:"subsonic-response" json:"-"`
+	XMLName                xml.Name                `xml:"http://subsonic.org/restapi subsonic-response" json:"-"`
 	Status                 string                  `xml:"status,attr" json:"status"`
 	Version                string                  `xml:"version,attr" json:"version"`
 	SearchResult3          *SearchResult3          `xml:"searchResult3,omitempty" json:"searchResult3,omitempty"`
@@ -65,6 +65,7 @@ type Playlist struct {
 	Created   string `xml:"created,attr,omitempty" json:"created,omitempty"`
 	Owner     string `xml:"owner,attr,omitempty" json:"owner,omitempty"`
 	Public    bool   `xml:"public,attr,omitempty" json:"public,omitempty"`
+	CoverArt  string `xml:"coverArt,attr,omitempty" json:"coverArt,omitempty"`
 	Entry     []Song `xml:"entry,omitempty" json:"entry,omitempty"`
 }
 
