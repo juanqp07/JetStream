@@ -29,6 +29,16 @@ type albumCacheEntry struct {
 	Songs []subsonic.Song
 }
 
+type playlistCacheEntry struct {
+	Playlist *subsonic.Playlist
+	Songs    []subsonic.Song
+}
+
+type artistCacheEntry struct {
+	Artist *subsonic.Artist
+	Albums []subsonic.Album
+}
+
 type TrackInfo struct {
 	DownloadURL string
 	MimeType    string
@@ -39,9 +49,17 @@ func NewSquidService(cfg *config.Config) *SquidService {
 		Addr: cfg.RedisAddr,
 	})
 
+	// Custom Transport for Connection Pooling
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	return &SquidService{
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Transport: transport,
+			Timeout:   30 * time.Second,
 		},
 		cfg:             cfg,
 		redis:           rdb,

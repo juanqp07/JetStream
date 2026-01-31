@@ -12,11 +12,6 @@ import (
 	"time"
 )
 
-type artistCacheEntry struct {
-	Artist *subsonic.Artist
-	Albums []subsonic.Album
-}
-
 // GetLyrics fetches lyrics for a track ID
 func (s *SquidService) GetLyrics(id string) (string, error) {
 	_, _, _, numericID := subsonic.ParseID(id)
@@ -384,6 +379,17 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 }
 
 func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.Song, error) {
+	ctx := context.Background()
+	cacheKey := fmt.Sprintf("playlist:%s", id)
+
+	// Check Cache
+	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
+		var entry playlistCacheEntry
+		if err := json.Unmarshal([]byte(val), &entry); err == nil {
+			return entry.Playlist, entry.Songs, nil
+		}
+	}
+
 	_, _, _, uuid := subsonic.ParseID(id)
 
 	urlStr := fmt.Sprintf("%s/playlist/?id=%s", s.getCurrentURL(), uuid)
@@ -464,6 +470,12 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 			IsDir:       false,
 			IsVideo:     false,
 		})
+	}
+
+	// Cache Result
+	entry := playlistCacheEntry{Playlist: playlist, Songs: songs}
+	if data, err := json.Marshal(entry); err == nil {
+		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
 	}
 
 	return playlist, songs, nil
