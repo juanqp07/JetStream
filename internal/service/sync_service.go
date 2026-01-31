@@ -248,6 +248,12 @@ func (s *SyncService) downloadAndTranscode(ctx context.Context, song *subsonic.S
 
 	if info, err := os.Stat(outputPath); err == nil {
 		slog.Info("Successfully synced", "path", outputPath, "sizeMB", float64(info.Size())/1024/1024)
+		// Perform immediate integrity check
+		if err := s.VerifyIntegrity(outputPath); err != nil {
+			slog.Error("File integrity check failed after sync, removing", "path", outputPath, "error", err)
+			os.Remove(outputPath)
+			return err
+		}
 	}
 
 	return nil
@@ -331,4 +337,80 @@ func (s *SyncService) GetDownloadFormat() string {
 		return "opus"
 	}
 	return f
+}
+
+// VerifyIntegrity checks if an audio file is valid using ffprobe
+func (s *SyncService) VerifyIntegrity(path string) error {
+	// Root context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Use ffprobe to check if it's a valid audio file and has a duration
+	args := []string{
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	}
+
+	cmd := exec.CommandContext(ctx, "ffprobe", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffprobe failed: %v (output: %s)", err, string(output))
+	}
+
+	durationStr := strings.TrimSpace(string(output))
+	if durationStr == "" || durationStr == "N/A" {
+		return fmt.Errorf("could not determine file duration")
+	}
+
+	duration, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse duration: %v", err)
+	}
+
+	if duration <= 1.0 { // Sanity check: must be at least 1 second
+		return fmt.Errorf("file duration too short (%.2fs)", duration)
+	}
+
+	return nil
+}
+
+// MaintenanceScan crawls the music folder and verifies all files
+func (s *SyncService) MaintenanceScan(ctx context.Context) (int, int, error) {
+	root := "/music/jetstream"
+	var total, corrupt int
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		// Check extensions
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".opus" && ext != ".mp3" && ext != ".aac" && ext != ".flac" {
+			return nil
+		}
+
+		total++
+		if err := s.VerifyIntegrity(path); err != nil {
+			corrupt++
+			slog.Warn("Found corrupt file, deleting", "path", path, "error", err)
+			os.Remove(path)
+		}
+
+		// Check context
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		return nil
+	})
+
+	return total, corrupt, err
 }

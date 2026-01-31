@@ -62,13 +62,14 @@ func (h *Handler) Stream(c *gin.Context) {
 	fileName := fmt.Sprintf("%02d - [%s] %s.%s", song.Track, externalID, h.syncService.SanitizePath(song.Title), h.syncService.GetDownloadFormat())
 	localPath := filepath.Join("/music", "jetstream", artistDir, albumDir, fileName)
 
-	if info, err := os.Stat(localPath); err == nil {
-		if info.Size() >= 100*1024 { // 100KB threshold
+	if _, err := os.Stat(localPath); err == nil {
+		// Perform integrity check
+		if err := h.syncService.VerifyIntegrity(localPath); err == nil {
 			log.Printf("[Stream] Serving local file from jetstream: %s", localPath)
 			c.File(localPath)
 			return
 		}
-		log.Printf("[Stream] Incomplete or small file detected in jetstream at %s (%d bytes), falling back to external stream", localPath, info.Size())
+		log.Printf("[Stream] Corrupt or incomplete file detected in jetstream at %s, falling back to external stream", localPath)
 	}
 
 	// 4. Fallback: Get Stream URL from Squid Service & Proxy

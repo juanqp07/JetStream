@@ -30,6 +30,7 @@ func main() {
 	searchHandler := handlers.NewSearchHandler(squidService, syncService, cfg, proxyHandler)
 	metadataHandler := handlers.NewMetadataHandler(squidService, syncService, proxyHandler)
 	handler := handlers.NewHandler(squidService, syncService, proxyHandler)
+	maintenanceHandler := handlers.NewMaintenanceHandler(syncService)
 
 	// 3. Setup Router
 	r := gin.Default()
@@ -146,8 +147,9 @@ func main() {
 
 	r.NoRoute(proxyHandler.Handle)
 
-	// Health & Sync endpoints
+	// Health & Maintenance
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	r.GET("/maintenance/scan", maintenanceHandler.Scan)
 	r.GET("/sync", func(c *gin.Context) {
 		id := c.Query("id")
 		if id == "" {
