@@ -21,12 +21,18 @@ const (
 	CachePrefix = "jetstream:cache:v1:"
 )
 
+type URLState struct {
+	URL           string
+	NextAvailable time.Time
+}
+
 type SquidService struct {
 	client          *http.Client
 	cfg             *config.Config
 	redis           *redis.Client
 	currentURLIndex int
 	urlMutex        sync.RWMutex
+	urlStates       []URLState
 }
 
 type albumCacheEntry struct {
@@ -61,6 +67,15 @@ func NewSquidService(cfg *config.Config) *SquidService {
 		IdleConnTimeout:     90 * time.Second,
 	}
 
+	states := make([]URLState, 0)
+	if len(cfg.SquidURLs) > 0 {
+		for _, u := range cfg.SquidURLs {
+			states = append(states, URLState{URL: u, NextAvailable: time.Now()})
+		}
+	} else if cfg.SquidURL != "" {
+		states = append(states, URLState{URL: cfg.SquidURL, NextAvailable: time.Now()})
+	}
+
 	return &SquidService{
 		client: &http.Client{
 			Transport: transport,
@@ -69,39 +84,66 @@ func NewSquidService(cfg *config.Config) *SquidService {
 		cfg:             cfg,
 		redis:           rdb,
 		currentURLIndex: 0,
+		urlStates:       states,
 	}
 }
 
-// getCurrentURL returns the currently active Squid URL
+// getCurrentURL returns the currently active Squid URL, skipping those on cooldown
 func (s *SquidService) getCurrentURL() string {
 	s.urlMutex.RLock()
 	defer s.urlMutex.RUnlock()
-	if len(s.cfg.SquidURLs) == 0 {
+
+	if len(s.urlStates) == 0 {
 		return s.cfg.SquidURL
 	}
-	return s.cfg.SquidURLs[s.currentURLIndex]
+
+	now := time.Now()
+	// 1. Try to find the first available starting from currentURLIndex
+	for i := 0; i < len(s.urlStates); i++ {
+		idx := (s.currentURLIndex + i) % len(s.urlStates)
+		if s.urlStates[idx].NextAvailable.Before(now) {
+			return s.urlStates[idx].URL
+		}
+	}
+
+	// 2. Fallback: If all are on cooldown, pick the one that becomes available first
+	// (But still follow circular logic if possible, or just the next one)
+	slog.Warn("All Squid URLs are on cooldown, picking the next in line anyway")
+	return s.urlStates[s.currentURLIndex].URL
 }
 
-// rotateURL moves to the next fallback URL
-func (s *SquidService) rotateURL() {
+// rotateURL moves to the next fallback URL and marks the current one as temporarily unavailable (cooldown)
+func (s *SquidService) markFailure(baseURL string) {
 	s.urlMutex.Lock()
 	defer s.urlMutex.Unlock()
-	if len(s.cfg.SquidURLs) > 0 {
-		s.currentURLIndex = (s.currentURLIndex + 1) % len(s.cfg.SquidURLs)
-		slog.Info("Rotated fallback URL", "url", s.cfg.SquidURLs[s.currentURLIndex])
+
+	cooldown := 30 * time.Minute
+	found := false
+	for i := range s.urlStates {
+		if s.urlStates[i].URL == baseURL {
+			s.urlStates[i].NextAvailable = time.Now().Add(cooldown)
+			slog.Warn("Marked URL on cooldown", "url", baseURL, "until", s.urlStates[i].NextAvailable)
+			found = true
+			break
+		}
+	}
+
+	if found && len(s.urlStates) > 1 {
+		s.currentURLIndex = (s.currentURLIndex + 1) % len(s.urlStates)
+		slog.Info("Rotating to next URL index", "newIndex", s.currentURLIndex)
 	}
 }
 
 // tryWithFallback attempts the action with all available URLs
 func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL string) error) error {
 	var lastErr error
-	maxAttempts := len(s.cfg.SquidURLs)
+	maxAttempts := len(s.urlStates)
 	if maxAttempts == 0 {
 		maxAttempts = 1
 	}
 
-	// We'll allow up to 3 retries per URL if it's a 429 or transient error
-	for attempt := 0; attempt < maxAttempts*2; attempt++ {
+	// We allow walking through the list once. If we hit the end and everything is failed/cooldown, we wrap
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		baseURL := s.getCurrentURL()
 		err := action(baseURL)
 		if err == nil {
@@ -111,37 +153,22 @@ func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL 
 		lastErr = err
 
 		// Detect 429
-		is429 := false
-		if err != nil && (err.Error() == "HTTP 429" || contains(err.Error(), "429")) {
-			is429 = true
-		}
+		is429 := contains(err.Error(), "429")
 
 		if is429 {
-			backoff := time.Duration(1<<uint(attempt%3)) * time.Second
-			slog.Warn("Rate limited (429), backing off", "baseURL", baseURL, "wait", backoff)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-				// Continue after backoff
-			}
-			// If we hit 429 twice on the same URL, rotate
-			if attempt%2 == 1 {
-				s.rotateURL()
-			}
+			slog.Warn("Rate limited (429) on endpoint", "baseURL", baseURL)
+			s.markFailure(baseURL)
 			continue
 		}
 
 		slog.Warn("Squid request failed", "baseURL", baseURL, "error", err, "attempt", attempt+1)
 
-		if attempt < maxAttempts-1 {
-			s.rotateURL()
-			// Short sleep to avoid immediate burst after failure
-			time.Sleep(200 * time.Millisecond)
-		}
+		// Any other failure also triggers a rotation and short status check
+		s.markFailure(baseURL)
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	slog.Error("All fallback endpoints failed or max retries reached", "lastErr", lastErr)
+	slog.Error("All fallback endpoints failed or on cooldown", "lastErr", lastErr)
 	return lastErr
 }
 
