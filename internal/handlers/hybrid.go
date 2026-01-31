@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/xml"
+	"fmt"
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
 	"log"
@@ -513,4 +514,181 @@ func (h *MetadataHandler) GetStarred(c *gin.Context) {
 
 func (h *MetadataHandler) GetStarred2(c *gin.Context) {
 	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetRandomSongs(c *gin.Context) {
+	artistName := c.Request.FormValue("artist")
+	// size := c.Request.FormValue("size") // Not used for now
+
+	// 1. Parallel Requests
+	var navidromeResult *subsonic.Response
+	var squidSongs []subsonic.Song
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	// A. Navidrome (Upstream)
+	go func() {
+		defer wg.Done()
+		u, _ := url.Parse(h.proxyHandler.GetTargetURL() + "/rest/getRandomSongs.view")
+		q := c.Request.URL.Query()
+		q.Set("f", "xml")
+		u.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", u.String(), nil)
+		req.Header = c.Request.Header.Clone()
+		req.Header.Del("Accept-Encoding")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+
+		navidromeResult = &subsonic.Response{}
+		xml.NewDecoder(resp.Body).Decode(navidromeResult)
+	}()
+
+	// B. Squid (External)
+	go func() {
+		defer wg.Done()
+		var res *subsonic.SearchResult3
+		var err error
+		if artistName != "" {
+			// If artist is provided, get top songs for that artist
+			count := 20
+			squidSongs, err = h.squidService.GetTopSongsByArtist(artistName, count)
+		} else {
+			// Otherwise just generic hits
+			res, err = h.squidService.Search("Hits")
+			if err == nil && res != nil {
+				squidSongs = res.Song
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// 2. Merge Results
+	if navidromeResult == nil {
+		navidromeResult = &subsonic.Response{
+			Status:      "ok",
+			Version:     "1.16.1",
+			RandomSongs: &subsonic.RandomSongs{},
+		}
+	}
+
+	if navidromeResult.RandomSongs == nil {
+		navidromeResult.RandomSongs = &subsonic.RandomSongs{}
+	}
+
+	// Inject some external songs if we have them
+	limit := 10
+	if len(squidSongs) < limit {
+		limit = len(squidSongs)
+	}
+	navidromeResult.RandomSongs.Song = append(navidromeResult.RandomSongs.Song, squidSongs[:limit]...)
+
+	// 3. Return Response
+	SendSubsonicResponse(c, *navidromeResult)
+}
+
+func (h *MetadataHandler) GetSongsByGenre(c *gin.Context) {
+	genre := c.Request.FormValue("genre")
+
+	// 1. Parallel Requests
+	var navidromeResult *subsonic.Response
+	var squidSongs []subsonic.Song
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	// A. Navidrome (Upstream)
+	go func() {
+		defer wg.Done()
+		u, _ := url.Parse(h.proxyHandler.GetTargetURL() + "/rest/getSongsByGenre.view")
+		q := c.Request.URL.Query()
+		q.Set("f", "xml")
+		u.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", u.String(), nil)
+		req.Header = c.Request.Header.Clone()
+		req.Header.Del("Accept-Encoding")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+
+		navidromeResult = &subsonic.Response{}
+		xml.NewDecoder(resp.Body).Decode(navidromeResult)
+	}()
+
+	// B. Squid (External) - Search for the genre
+	go func() {
+		defer wg.Done()
+		if genre != "" {
+			res, err := h.squidService.Search(genre)
+			if err == nil && res != nil {
+				squidSongs = res.Song
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// 2. Merge Results
+	if navidromeResult == nil {
+		navidromeResult = &subsonic.Response{
+			Status:       "ok",
+			Version:      "1.16.1",
+			SongsByGenre: &subsonic.RandomSongs{},
+		}
+	}
+
+	if navidromeResult.SongsByGenre == nil {
+		navidromeResult.SongsByGenre = &subsonic.RandomSongs{}
+	}
+
+	// Inject external songs
+	navidromeResult.SongsByGenre.Song = append(navidromeResult.SongsByGenre.Song, squidSongs...)
+
+	// 3. Return Response
+	SendSubsonicResponse(c, *navidromeResult)
+}
+
+func (h *MetadataHandler) GetSimilarSongs(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	countStr := c.Request.FormValue("count")
+	count := 20
+	if countStr != "" {
+		fmt.Sscanf(countStr, "%d", &count)
+	}
+
+	if strings.HasPrefix(id, "ext-") {
+		artist, _, err := h.squidService.GetArtist(id)
+		if err == nil {
+			songs, err := h.squidService.GetTopSongsByArtist(artist.Name, count)
+			if err == nil {
+				resp := subsonic.Response{
+					Status:  "ok",
+					Version: "1.16.1",
+					SimilarSongs: &subsonic.SimilarSongs{
+						Song: songs,
+					},
+				}
+				SendSubsonicResponse(c, resp)
+				return
+			}
+		}
+	}
+
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetSimilarSongs2(c *gin.Context) {
+	h.GetSimilarSongs(c)
 }

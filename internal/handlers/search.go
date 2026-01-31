@@ -299,7 +299,73 @@ func (h *SearchHandler) GetTopSongs(c *gin.Context) {
 }
 
 func (h *SearchHandler) GetAlbumList2(c *gin.Context) {
-	// Proxy to Navidrome.
-	// Future: Inject some "Trending" albums from Tidal.
+	listType := c.Request.FormValue("type")
+
+	if listType == "random" {
+		// 1. Parallel Requests
+		var navidromeResult *subsonic.Response
+		var squidAlbums []subsonic.Album
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		// A. Navidrome
+		go func() {
+			defer wg.Done()
+			u, _ := url.Parse(h.proxyHandler.GetTargetURL() + "/rest/getAlbumList2.view")
+			q := c.Request.URL.Query()
+			q.Set("f", "xml")
+			u.RawQuery = q.Encode()
+
+			req, _ := http.NewRequest("GET", u.String(), nil)
+			req.Header = c.Request.Header.Clone()
+			req.Header.Del("Accept-Encoding")
+
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			navidromeResult = &subsonic.Response{}
+			xml.NewDecoder(resp.Body).Decode(navidromeResult)
+		}()
+
+		// B. Squid - Search for "Hits" to get some "random" albums
+		go func() {
+			defer wg.Done()
+			res, err := h.squidService.Search("Hits")
+			if err == nil && res != nil {
+				squidAlbums = res.Album
+			}
+		}()
+
+		wg.Wait()
+
+		// 2. Merge
+		if navidromeResult == nil {
+			navidromeResult = &subsonic.Response{
+				Status:     "ok",
+				Version:    "1.16.1",
+				AlbumList2: &subsonic.AlbumList2{},
+			}
+		}
+
+		if navidromeResult.AlbumList2 == nil {
+			navidromeResult.AlbumList2 = &subsonic.AlbumList2{}
+		}
+
+		// Inject external albums
+		limit := 10
+		if len(squidAlbums) < limit {
+			limit = len(squidAlbums)
+		}
+		navidromeResult.AlbumList2.Album = append(navidromeResult.AlbumList2.Album, squidAlbums[:limit]...)
+
+		SendSubsonicResponse(c, *navidromeResult)
+		return
+	}
+
 	h.proxyHandler.Handle(c)
 }
