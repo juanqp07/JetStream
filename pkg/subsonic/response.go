@@ -19,6 +19,11 @@ type Response struct {
 	ArtistInfo2            *ArtistInfo             `xml:"artistInfo2,omitempty" json:"artistInfo2,omitempty"`
 	SimilarArtists         *SimilarArtists         `xml:"similarArtists,omitempty" json:"similarArtists,omitempty"`
 	TopSongs               *TopSongs               `xml:"topSongs,omitempty" json:"topSongs,omitempty"`
+	AlbumInfo              *AlbumInfo              `xml:"albumInfo,omitempty" json:"albumInfo,omitempty"`
+	AlbumInfo2             *AlbumInfo              `xml:"albumInfo2,omitempty" json:"albumInfo2,omitempty"`
+	Starred                *Starred                `xml:"starred,omitempty" json:"starred,omitempty"`
+	Starred2               *Starred                `xml:"starred2,omitempty" json:"starred2,omitempty"`
+	AlbumList2             *AlbumList2             `xml:"albumList2,omitempty" json:"albumList2,omitempty"`
 	Song                   *Song                   `xml:"song,omitempty" json:"song,omitempty"`
 	Lyrics                 *Lyrics                 `xml:"lyrics,omitempty" json:"lyrics,omitempty"`
 	OpenSubsonicExtensions *OpenSubsonicExtensions `xml:"openSubsonicExtensions,omitempty" json:"openSubsonicExtensions,omitempty"`
@@ -154,4 +159,23 @@ type SimilarArtists struct {
 
 type TopSongs struct {
 	Song []Song `xml:"song,omitempty" json:"song,omitempty"`
+}
+
+type AlbumInfo struct {
+	Notes          string `xml:"notes,omitempty" json:"notes,omitempty"`
+	MusicBrainzID  string `xml:"musicBrainzId,omitempty" json:"musicBrainzId,omitempty"`
+	LastFmURL      string `xml:"lastFmUrl,omitempty" json:"lastFmUrl,omitempty"`
+	SmallImageUrl  string `xml:"smallImageUrl,omitempty" json:"smallImageUrl,omitempty"`
+	MediumImageUrl string `xml:"mediumImageUrl,omitempty" json:"mediumImageUrl,omitempty"`
+	LargeImageUrl  string `xml:"largeImageUrl,omitempty" json:"largeImageUrl,omitempty"`
+}
+
+type Starred struct {
+	Artist []Artist `xml:"artist,omitempty" json:"artist,omitempty"`
+	Album  []Album  `xml:"album,omitempty" json:"album,omitempty"`
+	Song   []Song   `xml:"song,omitempty" json:"song,omitempty"`
+}
+
+type AlbumList2 struct {
+	Album []Album `xml:"album,omitempty" json:"album,omitempty"`
 }

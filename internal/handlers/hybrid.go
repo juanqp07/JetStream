@@ -433,3 +433,74 @@ func (h *MetadataHandler) GetMusicDirectory(c *gin.Context) {
 
 	h.proxyHandler.Handle(c)
 }
+
+func (h *MetadataHandler) GetAlbumInfo(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		resp := subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.1",
+			AlbumInfo: &subsonic.AlbumInfo{
+				Notes: "Information provided by Tidal.",
+			},
+		}
+		SendSubsonicResponse(c, resp)
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetAlbumInfo2(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		resp := subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.1",
+			AlbumInfo2: &subsonic.AlbumInfo{
+				Notes: "Information provided by Tidal.",
+			},
+		}
+		SendSubsonicResponse(c, resp)
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) Scrobble(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		// Just return OK for external IDs to prevent client errors
+		SendSubsonicResponse(c, subsonic.Response{Status: "ok", Version: "1.16.1"})
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) Star(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		// Mock success for now
+		SendSubsonicResponse(c, subsonic.Response{Status: "ok", Version: "1.16.1"})
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) Unstar(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		SendSubsonicResponse(c, subsonic.Response{Status: "ok", Version: "1.16.1"})
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetStarred(c *gin.Context) {
+	// Proxy to Navidrome for now.
+	// Future: Merge with Tidal favorites if implemented.
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetStarred2(c *gin.Context) {
+	h.proxyHandler.Handle(c)
+}

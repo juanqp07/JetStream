@@ -58,8 +58,22 @@ func main() {
 		subsonicGroup.Any("/getArtist", metadataHandler.GetArtist)
 		subsonicGroup.Any("/getAlbum.view", metadataHandler.GetAlbum)
 		subsonicGroup.Any("/getAlbum", metadataHandler.GetAlbum)
+		subsonicGroup.Any("/getAlbumInfo.view", metadataHandler.GetAlbumInfo)
+		subsonicGroup.Any("/getAlbumInfo", metadataHandler.GetAlbumInfo)
+		subsonicGroup.Any("/getAlbumInfo2.view", metadataHandler.GetAlbumInfo2)
+		subsonicGroup.Any("/getAlbumInfo2", metadataHandler.GetAlbumInfo2)
 		subsonicGroup.Any("/getSong.view", metadataHandler.GetSong)
 		subsonicGroup.Any("/getSong", metadataHandler.GetSong)
+
+		// Lists
+		subsonicGroup.Any("/getAlbumList.view", searchHandler.GetAlbumList2)
+		subsonicGroup.Any("/getAlbumList", searchHandler.GetAlbumList2)
+		subsonicGroup.Any("/getAlbumList2.view", searchHandler.GetAlbumList2)
+		subsonicGroup.Any("/getAlbumList2", searchHandler.GetAlbumList2)
+		subsonicGroup.Any("/getStarred.view", metadataHandler.GetStarred)
+		subsonicGroup.Any("/getStarred", metadataHandler.GetStarred)
+		subsonicGroup.Any("/getStarred2.view", metadataHandler.GetStarred2)
+		subsonicGroup.Any("/getStarred2", metadataHandler.GetStarred2)
 
 		// Extra Metadata (legacy compatibility)
 		subsonicGroup.Any("/getArtistInfo.view", metadataHandler.GetArtistInfo)
@@ -70,6 +84,14 @@ func main() {
 		subsonicGroup.Any("/getSimilarArtists", metadataHandler.GetSimilarArtists)
 		subsonicGroup.Any("/getTopSongs.view", searchHandler.GetTopSongs)
 		subsonicGroup.Any("/getTopSongs", searchHandler.GetTopSongs)
+
+		// User Interaction
+		subsonicGroup.Any("/scrobble.view", metadataHandler.Scrobble)
+		subsonicGroup.Any("/scrobble", metadataHandler.Scrobble)
+		subsonicGroup.Any("/star.view", metadataHandler.Star)
+		subsonicGroup.Any("/star", metadataHandler.Star)
+		subsonicGroup.Any("/unstar.view", metadataHandler.Unstar)
+		subsonicGroup.Any("/unstar", metadataHandler.Unstar)
 
 		// Search
 		subsonicGroup.Any("/search.view", searchHandler.Search)

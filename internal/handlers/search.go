@@ -275,3 +275,9 @@ func (h *SearchHandler) GetTopSongs(c *gin.Context) {
 	// Future: Fetch top tracks from Squid if artist is external.
 	h.proxyHandler.Handle(c)
 }
+
+func (h *SearchHandler) GetAlbumList2(c *gin.Context) {
+	// Proxy to Navidrome.
+	// Future: Inject some "Trending" albums from Tidal.
+	h.proxyHandler.Handle(c)
+}
