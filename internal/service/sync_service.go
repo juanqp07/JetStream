@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"jetstream/internal/config"
@@ -71,11 +72,14 @@ func (s *SyncService) SyncSong(ctx context.Context, song *subsonic.Song) error {
 	}
 
 	// 3. Check if song file exists and is complete
-	if info, err := os.Stat(outputPath); err == nil {
-		if info.Size() >= 100*1024 { // 100KB threshold
-			return nil // Already synced and seems complete
+	if _, err := os.Stat(outputPath); err == nil {
+		// Verify integrity
+		if err := s.VerifyIntegrity(outputPath); err == nil {
+			// Ensure metadata sidecar also exists
+			s.saveMetadata(song, outputPath)
+			return nil // Already synced and complete
 		}
-		slog.Warn("Existing file is too small, likely incomplete. Re-syncing.", "path", outputPath, "size", info.Size())
+		slog.Warn("Existing file is corrupt or incomplete. Re-syncing.", "path", outputPath)
 	}
 
 	// 4. Get Stream URL
@@ -254,6 +258,8 @@ func (s *SyncService) downloadAndTranscode(ctx context.Context, song *subsonic.S
 			os.Remove(outputPath)
 			return err
 		}
+		// Save metadata sidecar
+		s.saveMetadata(song, outputPath)
 	}
 
 	return nil
@@ -400,6 +406,17 @@ func (s *SyncService) MaintenanceScan(ctx context.Context) (int, int, error) {
 			corrupt++
 			slog.Warn("Found corrupt file, deleting", "path", path, "error", err)
 			os.Remove(path)
+			os.Remove(path + ".json")
+		} else {
+			// If file is good, check if we can index its metadata
+			jsonPath := path + ".json"
+			if data, err := os.ReadFile(jsonPath); err == nil {
+				var song subsonic.Song
+				if err := json.Unmarshal(data, &song); err == nil {
+					// Index ID to Path in Redis
+					s.redis.Set(ctx, "path:"+song.ID, path, 90*24*time.Hour)
+				}
+			}
 		}
 
 		// Check context
@@ -413,4 +430,21 @@ func (s *SyncService) MaintenanceScan(ctx context.Context) (int, int, error) {
 	})
 
 	return total, corrupt, err
+}
+
+func (s *SyncService) saveMetadata(song *subsonic.Song, mediaPath string) {
+	jsonPath := mediaPath + ".json"
+	data, err := json.MarshalIndent(song, "", "  ")
+	if err != nil {
+		slog.Error("Failed to marshal generic song metadata", "error", err)
+		return
+	}
+	if err := os.WriteFile(jsonPath, data, 0644); err != nil {
+		slog.Error("Failed to save metadata sidecar", "path", jsonPath, "error", err)
+	} else {
+		slog.Debug("Saved metadata sidecar", "path", jsonPath)
+	}
+
+	// Also index this ID to this path in Redis for fast lookup (long-lived)
+	s.redis.Set(context.Background(), "path:"+song.ID, mediaPath, 90*24*time.Hour)
 }

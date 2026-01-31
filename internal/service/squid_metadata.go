@@ -7,6 +7,7 @@ import (
 	"jetstream/pkg/subsonic"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,20 @@ func (s *SquidService) GetSong(ctx context.Context, id string) (*subsonic.Song, 
 		var song subsonic.Song
 		if err := json.Unmarshal([]byte(val), &song); err == nil {
 			return &song, nil
+		}
+	}
+
+	// NEW: Check for local metadata sidecar if sync path is known
+	if path, err := s.redis.Get(ctx, "path:"+id).Result(); err == nil {
+		jsonPath := path + ".json"
+		if data, err := os.ReadFile(jsonPath); err == nil {
+			var song subsonic.Song
+			if err := json.Unmarshal(data, &song); err == nil {
+				slog.Debug("Found local metadata sidecar", "path", jsonPath)
+				// Put back into short-term cache
+				s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+				return &song, nil
+			}
 		}
 	}
 
@@ -152,7 +167,7 @@ func (s *SquidService) GetSong(ctx context.Context, id string) (*subsonic.Song, 
 
 	// Cache Result
 	if data, err := json.Marshal(song); err == nil {
-		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+		s.redis.Set(ctx, cacheKey, data, 7*24*time.Hour)
 	}
 
 	return song, nil
@@ -274,7 +289,7 @@ func (s *SquidService) GetAlbum(ctx context.Context, id string) (*subsonic.Album
 	// Cache Result
 	entry := albumCacheEntry{Album: album, Songs: songs}
 	if data, err := json.Marshal(entry); err == nil {
-		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+		s.redis.Set(ctx, cacheKey, data, 7*24*time.Hour)
 	}
 	return album, songs, nil
 }
@@ -423,7 +438,7 @@ func (s *SquidService) GetArtist(ctx context.Context, id string) (*subsonic.Arti
 	// Cache Result
 	entry := artistCacheEntry{Artist: artist, Albums: albums}
 	if data, err := json.Marshal(entry); err == nil {
-		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+		s.redis.Set(ctx, cacheKey, data, 7*24*time.Hour)
 	}
 
 	return artist, albums, nil
@@ -532,7 +547,7 @@ func (s *SquidService) GetPlaylist(ctx context.Context, id string) (*subsonic.Pl
 	// Cache Result
 	entry := playlistCacheEntry{Playlist: playlist, Songs: songs}
 	if data, err := json.Marshal(entry); err == nil {
-		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+		s.redis.Set(ctx, cacheKey, data, 7*24*time.Hour)
 	}
 
 	return playlist, songs, nil
@@ -695,7 +710,7 @@ func (s *SquidService) GetCoverURL(ctx context.Context, id string) (string, erro
 	}
 
 	if coverURL != "" {
-		s.redis.Set(ctx, cacheKey, coverURL, 7*24*time.Hour)
+		s.redis.Set(ctx, cacheKey, coverURL, 7*7*24*time.Hour)
 	}
 
 	return coverURL, err

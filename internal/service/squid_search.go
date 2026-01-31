@@ -83,9 +83,8 @@ func (s *SquidService) Search(ctx context.Context, query string) (*subsonic.Sear
 		Playlist: playlists,
 	}
 
-	// Cache Result
 	if data, err := json.Marshal(res); err == nil {
-		s.redis.Set(ctx, cacheKey, data, 24*time.Hour)
+		s.redis.Set(ctx, cacheKey, data, 48*time.Hour)
 	}
 
 	return res, nil
