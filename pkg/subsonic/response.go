@@ -15,6 +15,10 @@ type Response struct {
 	Artist                 *ArtistWithAlbums       `xml:"artist,omitempty" json:"artist,omitempty"`
 	Album                  *AlbumWithSongs         `xml:"album,omitempty" json:"album,omitempty"`
 	Directory              *Directory              `xml:"directory,omitempty" json:"directory,omitempty"`
+	ArtistInfo             *ArtistInfo             `xml:"artistInfo,omitempty" json:"artistInfo,omitempty"`
+	ArtistInfo2            *ArtistInfo             `xml:"artistInfo2,omitempty" json:"artistInfo2,omitempty"`
+	SimilarArtists         *SimilarArtists         `xml:"similarArtists,omitempty" json:"similarArtists,omitempty"`
+	TopSongs               *TopSongs               `xml:"topSongs,omitempty" json:"topSongs,omitempty"`
 	Song                   *Song                   `xml:"song,omitempty" json:"song,omitempty"`
 	Lyrics                 *Lyrics                 `xml:"lyrics,omitempty" json:"lyrics,omitempty"`
 	OpenSubsonicExtensions *OpenSubsonicExtensions `xml:"openSubsonicExtensions,omitempty" json:"openSubsonicExtensions,omitempty"`
@@ -133,4 +137,21 @@ type Directory struct {
 	ID    string `xml:"id,attr" json:"id"`
 	Name  string `xml:"name,attr" json:"name"`
 	Child []Song `xml:"child"`
+}
+
+type ArtistInfo struct {
+	Biography      string `xml:"biography,omitempty" json:"biography,omitempty"`
+	MusicBrainzID  string `xml:"musicBrainzId,omitempty" json:"musicBrainzId,omitempty"`
+	LastFmURL      string `xml:"lastFmUrl,omitempty" json:"lastFmUrl,omitempty"`
+	SmallImageUrl  string `xml:"smallImageUrl,omitempty" json:"smallImageUrl,omitempty"`
+	MediumImageUrl string `xml:"mediumImageUrl,omitempty" json:"mediumImageUrl,omitempty"`
+	LargeImageUrl  string `xml:"largeImageUrl,omitempty" json:"largeImageUrl,omitempty"`
+}
+
+type SimilarArtists struct {
+	Artist []Artist `xml:"artist,omitempty" json:"artist,omitempty"`
+}
+
+type TopSongs struct {
+	Song []Song `xml:"song,omitempty" json:"song,omitempty"`
 }

@@ -26,7 +26,7 @@ func main() {
 	squidService := service.NewSquidService(cfg)
 	proxyHandler := handlers.NewProxyHandler(cfg)
 	syncService := service.NewSyncService(squidService, cfg)
-	searchHandler := handlers.NewSearchHandler(squidService, syncService, cfg)
+	searchHandler := handlers.NewSearchHandler(squidService, syncService, cfg, proxyHandler)
 	metadataHandler := handlers.NewMetadataHandler(squidService, syncService, proxyHandler)
 	handler := handlers.NewHandler(squidService, syncService, proxyHandler)
 
@@ -61,21 +61,37 @@ func main() {
 		subsonicGroup.Any("/getSong.view", metadataHandler.GetSong)
 		subsonicGroup.Any("/getSong", metadataHandler.GetSong)
 
+		// Extra Metadata (legacy compatibility)
+		subsonicGroup.Any("/getArtistInfo.view", metadataHandler.GetArtistInfo)
+		subsonicGroup.Any("/getArtistInfo", metadataHandler.GetArtistInfo)
+		subsonicGroup.Any("/getArtistInfo2.view", metadataHandler.GetArtistInfo2)
+		subsonicGroup.Any("/getArtistInfo2", metadataHandler.GetArtistInfo2)
+		subsonicGroup.Any("/getSimilarArtists.view", metadataHandler.GetSimilarArtists)
+		subsonicGroup.Any("/getSimilarArtists", metadataHandler.GetSimilarArtists)
+		subsonicGroup.Any("/getTopSongs.view", searchHandler.GetTopSongs)
+		subsonicGroup.Any("/getTopSongs", searchHandler.GetTopSongs)
+
 		// Search
 		subsonicGroup.Any("/search.view", searchHandler.Search)
 		subsonicGroup.Any("/search", searchHandler.Search)
 		subsonicGroup.Any("/search2.view", searchHandler.Search2)
+		subsonicGroup.Any("/search2", searchHandler.Search2)
 		subsonicGroup.Any("/search3.view", searchHandler.Search3)
 		subsonicGroup.Any("/search3", searchHandler.Search3)
 
 		// OpenSubsonic Extensions (Lyrics, etc)
 		subsonicGroup.Any("/getLyrics.view", metadataHandler.GetLyrics)
+		subsonicGroup.Any("/getLyrics", metadataHandler.GetLyrics)
 		subsonicGroup.Any("/getLyricsBySongId.view", metadataHandler.GetLyricsBySongId)
+		subsonicGroup.Any("/getLyricsBySongId", metadataHandler.GetLyricsBySongId)
 		subsonicGroup.Any("/getOpenSubsonicExtensions.view", metadataHandler.GetOpenSubsonicExtensions)
+		subsonicGroup.Any("/getOpenSubsonicExtensions", metadataHandler.GetOpenSubsonicExtensions)
 
 		// Playlists
 		subsonicGroup.Any("/getPlaylists.view", metadataHandler.GetPlaylists)
+		subsonicGroup.Any("/getPlaylists", metadataHandler.GetPlaylists)
 		subsonicGroup.Any("/getPlaylist.view", metadataHandler.GetPlaylist)
+		subsonicGroup.Any("/getPlaylist", metadataHandler.GetPlaylist)
 
 		// Media Retrieval
 		subsonicGroup.Any("/stream.view", handler.Stream)

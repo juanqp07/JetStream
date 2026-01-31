@@ -19,14 +19,16 @@ type SearchHandler struct {
 	syncService  *service.SyncService
 	cfg          *config.Config
 	client       *http.Client
+	proxyHandler *ProxyHandler
 }
 
-func NewSearchHandler(squidService *service.SquidService, syncService *service.SyncService, cfg *config.Config) *SearchHandler {
+func NewSearchHandler(squidService *service.SquidService, syncService *service.SyncService, cfg *config.Config, proxyHandler *ProxyHandler) *SearchHandler {
 	return &SearchHandler{
 		squidService: squidService,
 		syncService:  syncService,
 		cfg:          cfg,
 		client:       &http.Client{Timeout: 10 * time.Second},
+		proxyHandler: proxyHandler,
 	}
 }
 
@@ -266,4 +268,10 @@ func (h *SearchHandler) Search(c *gin.Context) {
 
 	// 3. Return Response
 	SendSubsonicResponse(c, *navidromeResult)
+}
+
+func (h *SearchHandler) GetTopSongs(c *gin.Context) {
+	// For now, proxy to Navidrome.
+	// Future: Fetch top tracks from Squid if artist is external.
+	h.proxyHandler.Handle(c)
 }

@@ -327,6 +327,56 @@ func (h *MetadataHandler) GetLyricsBySongId(c *gin.Context) {
 	h.proxyHandler.Handle(c)
 }
 
+func (h *MetadataHandler) GetArtistInfo(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		// Minimum biographical info to satisfy legacy clients
+		resp := subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.1",
+			ArtistInfo: &subsonic.ArtistInfo{
+				Biography: "Information provided by Tidal.",
+			},
+		}
+		SendSubsonicResponse(c, resp)
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetArtistInfo2(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		resp := subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.1",
+			ArtistInfo2: &subsonic.ArtistInfo{
+				Biography: "Information provided by Tidal.",
+			},
+		}
+		SendSubsonicResponse(c, resp)
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetSimilarArtists(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		// Satisfy the request with an empty list for now
+		resp := subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.1",
+			SimilarArtists: &subsonic.SimilarArtists{
+				Artist: []subsonic.Artist{},
+			},
+		}
+		SendSubsonicResponse(c, resp)
+		return
+	}
+	h.proxyHandler.Handle(c)
+}
+
 func (h *MetadataHandler) GetMusicDirectory(c *gin.Context) {
 	id := c.Request.FormValue("id")
 	if strings.HasPrefix(id, "ext-") {
