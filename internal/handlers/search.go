@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/xml"
+	"fmt"
 	"jetstream/internal/config"
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
@@ -271,8 +272,29 @@ func (h *SearchHandler) Search(c *gin.Context) {
 }
 
 func (h *SearchHandler) GetTopSongs(c *gin.Context) {
-	// For now, proxy to Navidrome.
-	// Future: Fetch top tracks from Squid if artist is external.
+	artist := c.Request.FormValue("artist")
+	countStr := c.Request.FormValue("count")
+	count := 20
+	if countStr != "" {
+		fmt.Sscanf(countStr, "%d", &count)
+	}
+
+	if artist != "" {
+		log.Printf("[Search] Fetching top songs for artist: %s", artist)
+		songs, err := h.squidService.GetTopSongsByArtist(artist, count)
+		if err == nil && len(songs) > 0 {
+			resp := subsonic.Response{
+				Status:  "ok",
+				Version: "1.16.1",
+				TopSongs: &subsonic.TopSongs{
+					Song: songs,
+				},
+			}
+			SendSubsonicResponse(c, resp)
+			return
+		}
+	}
+
 	h.proxyHandler.Handle(c)
 }
 

@@ -363,18 +363,28 @@ func (h *MetadataHandler) GetArtistInfo2(c *gin.Context) {
 func (h *MetadataHandler) GetSimilarArtists(c *gin.Context) {
 	id := c.Request.FormValue("id")
 	if strings.HasPrefix(id, "ext-") {
-		// Satisfy the request with an empty list for now
+		artists, err := h.squidService.GetSimilarArtists(id)
+		if err != nil {
+			log.Printf("[Metadata] GetSimilarArtists error for %s: %v", id, err)
+			SendSubsonicError(c, ErrGeneric, err.Error())
+			return
+		}
 		resp := subsonic.Response{
 			Status:  "ok",
 			Version: "1.16.1",
 			SimilarArtists: &subsonic.SimilarArtists{
-				Artist: []subsonic.Artist{},
+				Artist: artists,
 			},
 		}
 		SendSubsonicResponse(c, resp)
 		return
 	}
 	h.proxyHandler.Handle(c)
+}
+
+func (h *MetadataHandler) GetSimilarArtists2(c *gin.Context) {
+	// Subsonic API 1.11.0+ uses similarArtists2 which is the same as similarArtists but in the browse context
+	h.GetSimilarArtists(c)
 }
 
 func (h *MetadataHandler) GetMusicDirectory(c *gin.Context) {

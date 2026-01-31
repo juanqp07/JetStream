@@ -70,6 +70,12 @@ func main() {
 		subsonicGroup.Any("/getAlbumList", searchHandler.GetAlbumList2)
 		subsonicGroup.Any("/getAlbumList2.view", searchHandler.GetAlbumList2)
 		subsonicGroup.Any("/getAlbumList2", searchHandler.GetAlbumList2)
+		subsonicGroup.Any("/getRandomSongs.view", proxyHandler.Handle)
+		subsonicGroup.Any("/getRandomSongs", proxyHandler.Handle)
+		subsonicGroup.Any("/getSongsByGenre.view", proxyHandler.Handle)
+		subsonicGroup.Any("/getSongsByGenre", proxyHandler.Handle)
+		subsonicGroup.Any("/getNowPlaying.view", proxyHandler.Handle)
+		subsonicGroup.Any("/getNowPlaying", proxyHandler.Handle)
 		subsonicGroup.Any("/getStarred.view", metadataHandler.GetStarred)
 		subsonicGroup.Any("/getStarred", metadataHandler.GetStarred)
 		subsonicGroup.Any("/getStarred2.view", metadataHandler.GetStarred2)
@@ -82,6 +88,8 @@ func main() {
 		subsonicGroup.Any("/getArtistInfo2", metadataHandler.GetArtistInfo2)
 		subsonicGroup.Any("/getSimilarArtists.view", metadataHandler.GetSimilarArtists)
 		subsonicGroup.Any("/getSimilarArtists", metadataHandler.GetSimilarArtists)
+		subsonicGroup.Any("/getSimilarArtists2.view", metadataHandler.GetSimilarArtists2)
+		subsonicGroup.Any("/getSimilarArtists2", metadataHandler.GetSimilarArtists2)
 		subsonicGroup.Any("/getTopSongs.view", searchHandler.GetTopSongs)
 		subsonicGroup.Any("/getTopSongs", searchHandler.GetTopSongs)
 
@@ -92,6 +100,8 @@ func main() {
 		subsonicGroup.Any("/star", metadataHandler.Star)
 		subsonicGroup.Any("/unstar.view", metadataHandler.Unstar)
 		subsonicGroup.Any("/unstar", metadataHandler.Unstar)
+		subsonicGroup.Any("/getUser.view", proxyHandler.Handle)
+		subsonicGroup.Any("/getUser", proxyHandler.Handle)
 
 		// Search
 		subsonicGroup.Any("/search.view", searchHandler.Search)
@@ -114,6 +124,12 @@ func main() {
 		subsonicGroup.Any("/getPlaylists", metadataHandler.GetPlaylists)
 		subsonicGroup.Any("/getPlaylist.view", metadataHandler.GetPlaylist)
 		subsonicGroup.Any("/getPlaylist", metadataHandler.GetPlaylist)
+		subsonicGroup.Any("/createPlaylist.view", proxyHandler.Handle)
+		subsonicGroup.Any("/createPlaylist", proxyHandler.Handle)
+		subsonicGroup.Any("/deletePlaylist.view", proxyHandler.Handle)
+		subsonicGroup.Any("/deletePlaylist", proxyHandler.Handle)
+		subsonicGroup.Any("/updatePlaylist.view", proxyHandler.Handle)
+		subsonicGroup.Any("/updatePlaylist", proxyHandler.Handle)
 
 		// Media Retrieval
 		subsonicGroup.Any("/stream.view", handler.Stream)

@@ -624,3 +624,72 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 
 	return coverURL, err
 }
+
+func (s *SquidService) GetSimilarArtists(id string) ([]subsonic.Artist, error) {
+	_, _, _, numericID := subsonic.ParseID(id)
+	urlStr := fmt.Sprintf("%s/artist/similar/?id=%s", s.getCurrentURL(), numericID)
+
+	req, _ := http.NewRequest("GET", urlStr, nil)
+	req.Header.Set("User-Agent", UserAgent)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return []subsonic.Artist{}, nil
+	}
+
+	var result struct {
+		Artists []struct {
+			ID      int64  `json:"id"`
+			Name    string `json:"name"`
+			Picture string `json:"picture"`
+		} `json:"artists"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	var artists []subsonic.Artist
+	for _, item := range result.Artists {
+		artists = append(artists, subsonic.Artist{
+			ID:       subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.ID)),
+			Name:     item.Name,
+			CoverArt: subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.ID)),
+		})
+	}
+	return artists, nil
+}
+
+func (s *SquidService) GetTopSongsByArtist(artistName string, count int) ([]subsonic.Song, error) {
+	// We use the search endpoint to get popular tracks for the artist
+	res, err := s.Search(artistName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter songs to match the artist exactly if possible, or just return first N
+	var topSongs []subsonic.Song
+	for _, song := range res.Song {
+		if strings.EqualFold(song.Artist, artistName) {
+			topSongs = append(topSongs, song)
+		}
+		if len(topSongs) >= count {
+			break
+		}
+	}
+
+	// Fallback: if no exact matches, just take the first few
+	if len(topSongs) == 0 && len(res.Song) > 0 {
+		limit := count
+		if len(res.Song) < limit {
+			limit = len(res.Song)
+		}
+		topSongs = res.Song[:limit]
+	}
+
+	return topSongs, nil
+}
