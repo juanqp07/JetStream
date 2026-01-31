@@ -55,6 +55,13 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 		fURL, _ := url.Parse(h.cfg.NavidromeURL + c.Request.RequestURI)
 		q := fURL.Query()
 		q.Set("f", "xml")
+		ls := fmt.Sprintf("%d", h.cfg.SearchLimit)
+		if h.cfg.SearchLimit <= 0 {
+			ls = "50"
+		}
+		q.Set("songCount", ls)
+		q.Set("albumCount", ls)
+		q.Set("artistCount", ls)
 		fURL.RawQuery = q.Encode()
 
 		req, _ := http.NewRequest("GET", fURL.String(), nil)
@@ -126,7 +133,23 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 		slog.Debug("Squid returned 0 results (or error)", "query", query)
 	}
 
-	// 3. Return Response
+	// 3. Return Response & Limit
+	limit := h.cfg.SearchLimit
+	if limit <= 0 {
+		limit = 50
+	}
+	if navidromeResult.SearchResult3 != nil {
+		if len(navidromeResult.SearchResult3.Song) > limit {
+			navidromeResult.SearchResult3.Song = navidromeResult.SearchResult3.Song[:limit]
+		}
+		if len(navidromeResult.SearchResult3.Album) > limit {
+			navidromeResult.SearchResult3.Album = navidromeResult.SearchResult3.Album[:limit]
+		}
+		if len(navidromeResult.SearchResult3.Artist) > limit {
+			navidromeResult.SearchResult3.Artist = navidromeResult.SearchResult3.Artist[:limit]
+		}
+	}
+
 	SendSubsonicResponse(c, *navidromeResult)
 }
 
@@ -148,6 +171,13 @@ func (h *SearchHandler) Search2(c *gin.Context) {
 		fURL, _ := url.Parse(h.cfg.NavidromeURL + c.Request.RequestURI)
 		q := fURL.Query()
 		q.Set("f", "xml")
+		ls := fmt.Sprintf("%d", h.cfg.SearchLimit)
+		if h.cfg.SearchLimit <= 0 {
+			ls = "50"
+		}
+		q.Set("songCount", ls)
+		q.Set("albumCount", ls)
+		q.Set("artistCount", ls)
 		fURL.RawQuery = q.Encode()
 
 		req, _ := http.NewRequest("GET", fURL.String(), nil)
@@ -207,7 +237,23 @@ func (h *SearchHandler) Search2(c *gin.Context) {
 		navidromeResult.SearchResult2.Artist = append(navidromeResult.SearchResult2.Artist, squidResult.Artist...)
 	}
 
-	// 3. Return Response
+	// 3. Return Response & Limit
+	limit := h.cfg.SearchLimit
+	if limit <= 0 {
+		limit = 50
+	}
+	if navidromeResult.SearchResult2 != nil {
+		if len(navidromeResult.SearchResult2.Song) > limit {
+			navidromeResult.SearchResult2.Song = navidromeResult.SearchResult2.Song[:limit]
+		}
+		if len(navidromeResult.SearchResult2.Album) > limit {
+			navidromeResult.SearchResult2.Album = navidromeResult.SearchResult2.Album[:limit]
+		}
+		if len(navidromeResult.SearchResult2.Artist) > limit {
+			navidromeResult.SearchResult2.Artist = navidromeResult.SearchResult2.Artist[:limit]
+		}
+	}
+
 	SendSubsonicResponse(c, *navidromeResult)
 }
 
@@ -227,6 +273,11 @@ func (h *SearchHandler) Search(c *gin.Context) {
 		fURL, _ := url.Parse(h.cfg.NavidromeURL + c.Request.RequestURI)
 		q := fURL.Query()
 		q.Set("f", "xml")
+		ls := fmt.Sprintf("%d", h.cfg.SearchLimit)
+		if h.cfg.SearchLimit <= 0 {
+			ls = "50"
+		}
+		q.Set("songCount", ls)
 		fURL.RawQuery = q.Encode()
 
 		req, _ := http.NewRequest("GET", fURL.String(), nil)
@@ -279,7 +330,17 @@ func (h *SearchHandler) Search(c *gin.Context) {
 		}
 	}
 
-	// 3. Return Response
+	// 3. Return Response & Limit
+	limit := h.cfg.SearchLimit
+	if limit <= 0 {
+		limit = 50
+	}
+	if navidromeResult.SearchResult != nil {
+		if len(navidromeResult.SearchResult.Match) > limit {
+			navidromeResult.SearchResult.Match = navidromeResult.SearchResult.Match[:limit]
+		}
+	}
+
 	SendSubsonicResponse(c, *navidromeResult)
 }
 

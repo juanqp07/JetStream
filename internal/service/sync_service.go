@@ -325,10 +325,6 @@ func (s *SyncService) SanitizePath(p string) string {
 	return strings.TrimSpace(p)
 }
 
-func (s *SyncService) SearchFolder() string {
-	return os.Getenv("SEARCH_FOLDER")
-}
-
 func (s *SyncService) GetDownloadFormat() string {
 	f := os.Getenv("DOWNLOAD_FORMAT")
 	if f == "" {

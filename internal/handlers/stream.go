@@ -62,10 +62,6 @@ func (h *Handler) Stream(c *gin.Context) {
 	fileName := fmt.Sprintf("%02d - [%s] %s.%s", song.Track, externalID, h.syncService.SanitizePath(song.Title), h.syncService.GetDownloadFormat())
 	localPath := filepath.Join("/music", "jetstream", artistDir, albumDir, fileName)
 
-	// Ghost file check
-	ghostFileName := fmt.Sprintf("%02d - [%s] %s.mp3", song.Track, externalID, h.syncService.SanitizePath(song.Title))
-	searchResultPath := filepath.Join(h.syncService.SearchFolder(), artistDir, albumDir, ghostFileName)
-
 	if info, err := os.Stat(localPath); err == nil {
 		if info.Size() >= 100*1024 { // 100KB threshold
 			log.Printf("[Stream] Serving local file from jetstream: %s", localPath)
@@ -73,8 +69,6 @@ func (h *Handler) Stream(c *gin.Context) {
 			return
 		}
 		log.Printf("[Stream] Incomplete or small file detected in jetstream at %s (%d bytes), falling back to external stream", localPath, info.Size())
-	} else if info, err := os.Stat(searchResultPath); err == nil && info.Size() < 256*1024 {
-		log.Printf("[Stream] Small file detected in search folder: %s (%d bytes)", searchResultPath, info.Size())
 	}
 
 	// 4. Fallback: Get Stream URL from Squid Service & Proxy

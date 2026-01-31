@@ -12,7 +12,6 @@ services:
       - SEARCH_LIMIT=${SEARCH_LIMIT:-50}
       - DOWNLOAD_FORMAT=${DOWNLOAD_FORMAT:-opus}
       - MUSIC_FOLDER=${MUSIC_FOLDER:-/music}
-      - SEARCH_FOLDER=${SEARCH_FOLDER:-/music/search}
       - REDIS_ADDR=redis:6379
     depends_on:
       - redis

@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/joho/godotenv"
@@ -16,7 +15,6 @@ type Config struct {
 	SquidURL       string   // Primary URL for backward compatibility
 	SquidURLs      []string // All URLs including fallbacks
 	MusicFolder    string
-	SearchFolder   string
 	DownloadFormat string
 	SearchLimit    int
 	RedisAddr      string
@@ -57,7 +55,6 @@ func Load() (*Config, error) {
 		SquidURL:       primarySquidURL,
 		SquidURLs:      squidURLs,
 		MusicFolder:    musicFolder,
-		SearchFolder:   getEnv("SEARCH_FOLDER", filepath.Join(musicFolder, "search")),
 		DownloadFormat: getEnv("DOWNLOAD_FORMAT", "opus"),
 		SearchLimit:    getEnvInt("SEARCH_LIMIT", 50),
 		RedisAddr:      getEnv("REDIS_ADDR", "localhost:6379"),
