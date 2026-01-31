@@ -31,27 +31,23 @@ func NewMetadataHandler(squidService *service.SquidService, syncService *service
 func (h *MetadataHandler) GetAlbum(c *gin.Context) {
 	id := c.Request.FormValue("id")
 	log.Printf("[Metadata] GetAlbum request for ID: %s", id)
-	if strings.HasPrefix(id, "ext-") {
-		log.Printf("[Metadata] Fetching external album info from Squid: %s", id)
-
-		album, songs, err := h.squidService.GetAlbum(id)
-		if err != nil {
-			log.Printf("[Metadata] GetAlbum error for %s: %v", id, err)
-			SendSubsonicError(c, ErrGeneric, err.Error())
+	// Try to resolve local ID to external ID
+	resolvedID, _, err := ResolveVirtualAlbumID(c, h.proxyHandler, h.squidService, id)
+	if err == nil && resolvedID != id {
+		log.Printf("[Metadata] Resolved local Album ID %s to external ID: %s", id, resolvedID)
+		album, songs, err := h.squidService.GetAlbum(resolvedID)
+		if err == nil {
+			resp := subsonic.Response{
+				Status:  "ok",
+				Version: "1.16.1",
+				Album: &subsonic.AlbumWithSongs{
+					Album: *album,
+					Song:  songs,
+				},
+			}
+			SendSubsonicResponse(c, resp)
 			return
 		}
-
-		resp := subsonic.Response{
-			Status:  "ok",
-			Version: "1.16.1",
-			Album: &subsonic.AlbumWithSongs{
-				Album: *album,
-				Song:  songs,
-			},
-		}
-
-		SendSubsonicResponse(c, resp)
-		return
 	}
 
 	// Default: Navidrome
@@ -60,26 +56,25 @@ func (h *MetadataHandler) GetAlbum(c *gin.Context) {
 
 func (h *MetadataHandler) GetArtist(c *gin.Context) {
 	id := c.Request.FormValue("id")
-	if strings.HasPrefix(id, "ext-") {
-		artist, albums, err := h.squidService.GetArtist(id)
-		if err != nil {
-			log.Printf("[Metadata] GetArtist error for %s: %v", id, err)
-			SendSubsonicError(c, ErrArtistNotFound, err.Error())
+	// Try to resolve local ID to external ID
+	resolvedID, _, err := ResolveVirtualArtistID(c, h.proxyHandler, h.squidService, id)
+	if err == nil && resolvedID != id {
+		log.Printf("[Metadata] Resolved local Artist ID %s to external ID: %s", id, resolvedID)
+		artist, albums, err := h.squidService.GetArtist(resolvedID)
+		if err == nil {
+			resp := subsonic.Response{
+				Status:  "ok",
+				Version: "1.16.1",
+				Artist: &subsonic.ArtistWithAlbums{
+					Artist: *artist,
+					Album:  albums,
+				},
+			}
+			SendSubsonicResponse(c, resp)
 			return
 		}
-
-		resp := subsonic.Response{
-			Status:  "ok",
-			Version: "1.16.1",
-			Artist: &subsonic.ArtistWithAlbums{
-				Artist: *artist,
-				Album:  albums,
-			},
-		}
-
-		SendSubsonicResponse(c, resp)
-		return
 	}
+
 	h.proxyHandler.Handle(c)
 }
 

@@ -113,6 +113,37 @@ func (s *SquidService) SearchOne(artist, title string) (string, error) {
 	return res.Song[0].ID, nil
 }
 
+// SearchOneArtist attempts to find a single artist ID matching the name.
+func (s *SquidService) SearchOneArtist(name string) (string, error) {
+	res, err := s.Search(name)
+	if err != nil {
+		return "", err
+	}
+
+	if len(res.Artist) == 0 {
+		return "", fmt.Errorf("no matches found")
+	}
+
+	// For now, just take the first one
+	return res.Artist[0].ID, nil
+}
+
+// SearchOneAlbum attempts to find a single album ID matching the artist and title.
+func (s *SquidService) SearchOneAlbum(artist, title string) (string, error) {
+	query := fmt.Sprintf("%s %s", artist, title)
+	res, err := s.Search(query)
+	if err != nil {
+		return "", err
+	}
+
+	if len(res.Album) == 0 {
+		return "", fmt.Errorf("no matches found")
+	}
+
+	// For now, just take the first one
+	return res.Album[0].ID, nil
+}
+
 func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -205,10 +236,10 @@ func (s *SquidService) fetchAlbums(urlStr string) ([]subsonic.Album, error) {
 					ID          int64  `json:"id"`
 					Title       string `json:"title"`
 					ReleaseDate string `json:"releaseDate"`
-					Artist      struct {
+					Artists     []struct {
 						ID   int64  `json:"id"`
 						Name string `json:"name"`
-					} `json:"artist"`
+					} `json:"artists"`
 					Cover string `json:"cover"`
 				} `json:"items"`
 			} `json:"albums"`
@@ -229,12 +260,19 @@ func (s *SquidService) fetchAlbums(urlStr string) ([]subsonic.Album, error) {
 			fmt.Sscanf(item.ReleaseDate, "%d", &year)
 		}
 
+		artistName := ""
+		artistID := int64(0)
+		if len(item.Artists) > 0 {
+			artistName = item.Artists[0].Name
+			artistID = item.Artists[0].ID
+		}
+
 		albums = append(albums, subsonic.Album{
 			ID:       subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.ID)),
 			Title:    item.Title,
 			Name:     item.Title,
-			Artist:   item.Artist.Name,
-			ArtistID: subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", item.Artist.ID)),
+			Artist:   artistName,
+			ArtistID: subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", artistID)),
 			Year:     year,
 			CoverArt: subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.ID)),
 		})

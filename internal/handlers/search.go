@@ -89,6 +89,10 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 			Version:       "1.16.1",
 			SearchResult3: &subsonic.SearchResult3{},
 		}
+	} else {
+		// Even if Navidrome failed, we might have Squid results, so force OK status
+		navidromeResult.Status = "ok"
+		navidromeResult.Error = nil
 	}
 
 	if navidromeResult.SearchResult3 == nil {
@@ -110,6 +114,154 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 
 	} else {
 		log.Printf("[Search] Squid returned 0 results (or error) for query '%s'", query)
+	}
+
+	// 3. Return Response
+	SendSubsonicResponse(c, *navidromeResult)
+}
+
+func (h *SearchHandler) Search2(c *gin.Context) {
+	query := c.Request.FormValue("query")
+
+	// 1. Parallel Requests
+	var navidromeResult *subsonic.Response
+	var squidResult *subsonic.SearchResult3
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	// A. Navidrome (Upstream)
+	go func() {
+		defer wg.Done()
+
+		// Force XML from Navidrome for parsing consistency
+		fURL, _ := url.Parse(h.cfg.NavidromeURL + c.Request.RequestURI)
+		q := fURL.Query()
+		q.Set("f", "xml")
+		fURL.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", fURL.String(), nil)
+		req.Header = c.Request.Header.Clone()
+		req.Header.Del("Accept-Encoding")
+
+		resp, err := h.client.Do(req)
+		if err != nil {
+			log.Printf("[Search2] [ERROR] Upstream request failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		navidromeResult = &subsonic.Response{}
+		if err := xml.NewDecoder(resp.Body).Decode(navidromeResult); err != nil {
+			log.Printf("[Search2] [ERROR] Decoding Upstream response: %v", err)
+		}
+	}()
+
+	// B. Squid (External)
+	go func() {
+		defer wg.Done()
+		res, err := h.squidService.Search(query)
+		if err == nil {
+			squidResult = res
+		}
+	}()
+
+	wg.Wait()
+
+	// 2. Merge Results
+	if navidromeResult == nil {
+		navidromeResult = &subsonic.Response{
+			Status:        "ok",
+			Version:       "1.16.1",
+			SearchResult2: &subsonic.SearchResult2{},
+		}
+	} else {
+		// Even if Navidrome failed, we might have Squid results, so force OK status
+		navidromeResult.Status = "ok"
+		navidromeResult.Error = nil
+	}
+
+	if navidromeResult.SearchResult2 == nil {
+		navidromeResult.SearchResult2 = &subsonic.SearchResult2{}
+	}
+
+	if squidResult != nil {
+		// Append Songs
+		navidromeResult.SearchResult2.Song = append(navidromeResult.SearchResult2.Song, squidResult.Song...)
+		// Append Albums
+		navidromeResult.SearchResult2.Album = append(navidromeResult.SearchResult2.Album, squidResult.Album...)
+		// Append Artists
+		navidromeResult.SearchResult2.Artist = append(navidromeResult.SearchResult2.Artist, squidResult.Artist...)
+	}
+
+	// 3. Return Response
+	SendSubsonicResponse(c, *navidromeResult)
+}
+
+func (h *SearchHandler) Search(c *gin.Context) {
+	query := c.Request.FormValue("query")
+
+	// 1. Parallel Requests
+	var navidromeResult *subsonic.Response
+	var squidResult *subsonic.SearchResult3
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	// A. Navidrome (Upstream)
+	go func() {
+		defer wg.Done()
+		fURL, _ := url.Parse(h.cfg.NavidromeURL + c.Request.RequestURI)
+		q := fURL.Query()
+		q.Set("f", "xml")
+		fURL.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", fURL.String(), nil)
+		req.Header = c.Request.Header.Clone()
+		req.Header.Del("Accept-Encoding")
+
+		resp, err := h.client.Do(req)
+		if err != nil {
+			log.Printf("[Search1] [ERROR] Upstream failure: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		navidromeResult = &subsonic.Response{}
+		xml.NewDecoder(resp.Body).Decode(navidromeResult)
+	}()
+
+	// B. Squid (External)
+	go func() {
+		defer wg.Done()
+		res, err := h.squidService.Search(query)
+		if err == nil {
+			squidResult = res
+		}
+	}()
+
+	wg.Wait()
+
+	// 2. Merge Results
+	if navidromeResult == nil {
+		navidromeResult = &subsonic.Response{
+			Status:  "ok",
+			Version: "1.16.1",
+		}
+	} else {
+		navidromeResult.Status = "ok"
+		navidromeResult.Error = nil
+	}
+
+	if navidromeResult.SearchResult == nil {
+		navidromeResult.SearchResult = &subsonic.SearchResult{}
+	}
+
+	if squidResult != nil {
+		// Search1 only has "Match" (songs)
+		for _, s := range squidResult.Song {
+			navidromeResult.SearchResult.Match = append(navidromeResult.SearchResult.Match, s)
+		}
 	}
 
 	// 3. Return Response

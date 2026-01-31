@@ -7,7 +7,9 @@ type Response struct {
 	XMLName                xml.Name                `xml:"http://subsonic.org/restapi subsonic-response" json:"-"`
 	Status                 string                  `xml:"status,attr" json:"status"`
 	Version                string                  `xml:"version,attr" json:"version"`
+	SearchResult           *SearchResult           `xml:"searchResult,omitempty" json:"searchResult,omitempty"`
 	SearchResult3          *SearchResult3          `xml:"searchResult3,omitempty" json:"searchResult3,omitempty"`
+	SearchResult2          *SearchResult2          `xml:"searchResult2,omitempty" json:"searchResult2,omitempty"`
 	Playlists              *Playlists              `xml:"playlists,omitempty" json:"playlists,omitempty"`
 	Playlist               *Playlist               `xml:"playlist,omitempty" json:"playlist,omitempty"`
 	Artist                 *ArtistWithAlbums       `xml:"artist,omitempty" json:"artist,omitempty"`
@@ -42,6 +44,16 @@ type SearchResult3 struct {
 	Album    []Album    `xml:"album,omitempty" json:"album,omitempty"`
 	Song     []Song     `xml:"song,omitempty" json:"song,omitempty"`
 	Playlist []Playlist `xml:"playlist,omitempty" json:"playlist,omitempty"`
+}
+
+type SearchResult2 struct {
+	Artist []Artist `xml:"artist,omitempty" json:"artist,omitempty"`
+	Album  []Album  `xml:"album,omitempty" json:"album,omitempty"`
+	Song   []Song   `xml:"song,omitempty" json:"song,omitempty"`
+}
+
+type SearchResult struct {
+	Match []Song `xml:"match,omitempty" json:"match,omitempty"`
 }
 
 type OpenSubsonicExtensions struct {

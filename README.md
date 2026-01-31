@@ -18,6 +18,8 @@ This project is a **fork/inspiration** of [octo-fiestarr](https://github.com/bra
 - **Search Optimization**: Configurable search limits to keep API usage efficient.
 - **Docker Ready**: Easy deployment with Docker Compose and automated CI/CD via GHCR.
 
+For a detailed list of recent changes, see the [Changelog](CHANGELOG.md).
+
 ## Architecture
 
 ```mermaid

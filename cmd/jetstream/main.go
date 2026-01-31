@@ -62,7 +62,9 @@ func main() {
 		subsonicGroup.Any("/getSong", metadataHandler.GetSong)
 
 		// Search
-		subsonicGroup.Any("/search2.view", proxyHandler.Handle)
+		subsonicGroup.Any("/search.view", searchHandler.Search)
+		subsonicGroup.Any("/search", searchHandler.Search)
+		subsonicGroup.Any("/search2.view", searchHandler.Search2)
 		subsonicGroup.Any("/search3.view", searchHandler.Search3)
 		subsonicGroup.Any("/search3", searchHandler.Search3)
 

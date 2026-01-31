@@ -149,6 +149,103 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 	return navidromeID, false, nil
 }
 
+// ResolveVirtualArtistID attempts to find an external artist ID for a given Navidrome Artist ID.
+func ResolveVirtualArtistID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidService, navidromeID string) (string, bool, error) {
+	if strings.HasPrefix(navidromeID, "ext-") {
+		return navidromeID, true, nil
+	}
+
+	log.Printf("[Resolver] [DEBUG] Resolving Artist ID: %s", navidromeID)
+
+	parsedURL, _ := url.Parse(proxy.GetTargetURL() + "/rest/getArtist.view")
+	q := c.Request.URL.Query()
+	q.Set("id", navidromeID)
+	q.Set("f", "xml")
+	parsedURL.RawQuery = q.Encode()
+
+	req, _ := http.NewRequest("GET", parsedURL.String(), nil)
+	req.Header = c.Request.Header.Clone()
+	req.Header.Del("Accept-Encoding")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		XMLName xml.Name `xml:"subsonic-response"`
+		Artist  struct {
+			Name string `xml:"name,attr"`
+		} `xml:"artist"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", false, err
+	}
+
+	if result.Artist.Name == "" {
+		return navidromeID, false, nil
+	}
+
+	resolvedID, err := squid.SearchOneArtist(result.Artist.Name)
+	if err == nil {
+		log.Printf("[Resolver] [SUCCESS] Resolved Artist %s -> %s (%s)", navidromeID, resolvedID, result.Artist.Name)
+		return resolvedID, true, nil
+	}
+
+	return navidromeID, false, nil
+}
+
+// ResolveVirtualAlbumID attempts to find an external album ID for a given Navidrome Album ID.
+func ResolveVirtualAlbumID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidService, navidromeID string) (string, bool, error) {
+	if strings.HasPrefix(navidromeID, "ext-") {
+		return navidromeID, true, nil
+	}
+
+	log.Printf("[Resolver] [DEBUG] Resolving Album ID: %s", navidromeID)
+
+	parsedURL, _ := url.Parse(proxy.GetTargetURL() + "/rest/getAlbum.view")
+	q := c.Request.URL.Query()
+	q.Set("id", navidromeID)
+	q.Set("f", "xml")
+	parsedURL.RawQuery = q.Encode()
+
+	req, _ := http.NewRequest("GET", parsedURL.String(), nil)
+	req.Header = c.Request.Header.Clone()
+	req.Header.Del("Accept-Encoding")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		XMLName xml.Name `xml:"subsonic-response"`
+		Album   struct {
+			Title  string `xml:"title,attr"`
+			Artist string `xml:"artist,attr"`
+		} `xml:"album"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", false, err
+	}
+
+	if result.Album.Title == "" {
+		return navidromeID, false, nil
+	}
+
+	resolvedID, err := squid.SearchOneAlbum(result.Album.Artist, result.Album.Title)
+	if err == nil {
+		log.Printf("[Resolver] [SUCCESS] Resolved Album %s -> %s (%s - %s)", navidromeID, resolvedID, result.Album.Artist, result.Album.Title)
+		return resolvedID, true, nil
+	}
+
+	return navidromeID, false, nil
+}
+
 // Subsonic Error Codes
 const (
 	ErrGeneric           = 0
