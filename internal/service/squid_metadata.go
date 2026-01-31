@@ -315,7 +315,6 @@ func (s *SquidService) GetArtist(ctx context.Context, id string) (*subsonic.Arti
 
 	// 1. Fetch Artist Metadata
 	var metaErr error
-	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		metaErr = s.tryWithFallback(ctx, func(baseURL string) error {
@@ -346,7 +345,6 @@ func (s *SquidService) GetArtist(ctx context.Context, id string) (*subsonic.Arti
 
 	// 2. Fetch Artist Albums
 	var errAlbums error
-	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		errAlbums = s.tryWithFallback(ctx, func(baseURL string) error {
