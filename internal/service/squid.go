@@ -113,16 +113,17 @@ func (s *SquidService) getCurrentURL() string {
 }
 
 // rotateURL moves to the next fallback URL and marks the current one as temporarily unavailable (cooldown)
-func (s *SquidService) markFailure(baseURL string) {
+func (s *SquidService) markFailure(baseURL string, cooldown time.Duration) {
 	s.urlMutex.Lock()
 	defer s.urlMutex.Unlock()
 
-	cooldown := 30 * time.Minute
 	found := false
 	for i := range s.urlStates {
 		if s.urlStates[i].URL == baseURL {
 			s.urlStates[i].NextAvailable = time.Now().Add(cooldown)
-			slog.Warn("Marked URL on cooldown", "url", baseURL, "until", s.urlStates[i].NextAvailable)
+			if cooldown > 0 {
+				slog.Warn("Marked URL on cooldown", "url", baseURL, "until", s.urlStates[i].NextAvailable)
+			}
 			found = true
 			break
 		}
@@ -154,17 +155,36 @@ func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL 
 
 		// Detect 429
 		is429 := contains(err.Error(), "429")
+		// Detect 404
+		is404 := contains(err.Error(), "404")
+		// Detect connectivity issues (e.g., "network error", "connection refused", "timeout")
+		isUnavailable := contains(err.Error(), "network error") ||
+			contains(err.Error(), "connection") ||
+			contains(err.Error(), "timeout") ||
+			contains(err.Error(), "no such host")
 
 		if is429 {
 			slog.Warn("Rate limited (429) on endpoint", "baseURL", baseURL)
-			s.markFailure(baseURL)
+			s.markFailure(baseURL, 30*time.Minute)
 			continue
 		}
 
-		slog.Warn("Squid request failed", "baseURL", baseURL, "error", err, "attempt", attempt+1)
+		if isUnavailable {
+			slog.Warn("Endpoint unavailable", "baseURL", baseURL, "error", err)
+			s.markFailure(baseURL, 30*time.Minute)
+			continue
+		}
 
-		// Any other failure also triggers a rotation and short status check
-		s.markFailure(baseURL)
+		if is404 {
+			slog.Debug("Resource not found on endpoint (404), rotating", "baseURL", baseURL)
+			s.markFailure(baseURL, 0) // No cooldown, just rotate
+			continue
+		}
+
+		slog.Warn("Squid request failed with unknown error", "baseURL", baseURL, "error", err, "attempt", attempt+1)
+
+		// Any other failure triggers a rotation and a short 5-min cooldown
+		s.markFailure(baseURL, 5*time.Minute)
 		time.Sleep(100 * time.Millisecond)
 	}
 
