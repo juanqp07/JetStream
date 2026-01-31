@@ -182,15 +182,15 @@ func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL 
 		}
 
 		if isUnavailable {
-			slog.Warn("Endpoint unavailable", "baseURL", baseURL, "error", err)
-			s.markFailure(baseURL, 30*time.Minute)
+			slog.Warn("Endpoint unavailable, rotating", "baseURL", baseURL, "error", err)
+			s.markFailure(baseURL, 0) // Rotate only, no cooldown
 			continue
 		}
 
-		slog.Warn("Squid request failed with unknown error", "baseURL", baseURL, "error", err, "attempt", attempt+1)
+		slog.Warn("Squid request failed with unknown error, rotating", "baseURL", baseURL, "error", err, "attempt", attempt+1)
 
-		// Any other failure triggers a rotation and a short 5-min cooldown
-		s.markFailure(baseURL, 5*time.Minute)
+		// Any other failure triggers a rotation without cooldown
+		s.markFailure(baseURL, 0)
 		time.Sleep(100 * time.Millisecond)
 	}
 
