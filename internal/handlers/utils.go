@@ -109,8 +109,8 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 	var isGhost bool
 	if info, err := os.Stat(fullPath); err == nil {
 		if info.Mode().IsRegular() {
-			// Ghost check: Dummy files with covers can still be up to 500KB-1MB
-			if info.Size() < 1024*1024 { // 1MB threshold
+			// Ghost check: Dummy files with covers can still be up to 100-200KB
+			if info.Size() < 256*1024 { // 256KB threshold
 				isGhost = true
 				slog.Debug("File is small, treating as virtual/ghost", "path", fullPath, "size", info.Size())
 			}
