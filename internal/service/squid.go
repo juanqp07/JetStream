@@ -152,16 +152,28 @@ func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL 
 		}
 
 		lastErr = err
+		errStr := err.Error()
 
 		// Detect 429
-		is429 := contains(err.Error(), "429")
+		is429 := contains(errStr, "429")
 		// Detect 404
-		is404 := contains(err.Error(), "404")
+		is404 := contains(errStr, "404")
 		// Detect connectivity issues (e.g., "network error", "connection refused", "timeout")
-		isUnavailable := contains(err.Error(), "network error") ||
-			contains(err.Error(), "connection") ||
-			contains(err.Error(), "timeout") ||
-			contains(err.Error(), "no such host")
+		isUnavailable := contains(errStr, "network error") ||
+			contains(errStr, "connection") ||
+			contains(errStr, "timeout") ||
+			contains(errStr, "no such host")
+
+		// Detect missing data (valid response but resource doesn't exist)
+		isMissingData := contains(errStr, "no picture") ||
+			contains(errStr, "no cover art") ||
+			contains(errStr, "no art") ||
+			contains(errStr, "not found")
+
+		if isMissingData || is404 {
+			slog.Debug("Resource missing or not found (404), stopping retries", "baseURL", baseURL, "error", err)
+			return err // Return immediately, no cooldown, no rotation
+		}
 
 		if is429 {
 			slog.Warn("Rate limited (429) on endpoint", "baseURL", baseURL)
@@ -172,12 +184,6 @@ func (s *SquidService) tryWithFallback(ctx context.Context, action func(baseURL 
 		if isUnavailable {
 			slog.Warn("Endpoint unavailable", "baseURL", baseURL, "error", err)
 			s.markFailure(baseURL, 30*time.Minute)
-			continue
-		}
-
-		if is404 {
-			slog.Debug("Resource not found on endpoint (404), rotating", "baseURL", baseURL)
-			s.markFailure(baseURL, 0) // No cooldown, just rotate
 			continue
 		}
 
