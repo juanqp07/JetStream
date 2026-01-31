@@ -171,6 +171,40 @@ func (s *SquidService) fetchSongs(ctx context.Context, query string) ([]subsonic
 						Cover string `json:"cover"`
 					} `json:"album"`
 				} `json:"items"`
+				Tracks struct {
+					Items []struct {
+						ID          int64  `json:"id"`
+						Title       string `json:"title"`
+						Duration    int    `json:"duration"`
+						TrackNumber int    `json:"trackNumber"`
+						Artist      struct {
+							ID   int64  `json:"id"`
+							Name string `json:"name"`
+						} `json:"artist"`
+						Album struct {
+							ID    int64  `json:"id"`
+							Title string `json:"title"`
+							Cover string `json:"cover"`
+						} `json:"album"`
+					} `json:"items"`
+				} `json:"tracks"`
+				Songs struct {
+					Items []struct {
+						ID          int64  `json:"id"`
+						Title       string `json:"title"`
+						Duration    int    `json:"duration"`
+						TrackNumber int    `json:"trackNumber"`
+						Artist      struct {
+							ID   int64  `json:"id"`
+							Name string `json:"name"`
+						} `json:"artist"`
+						Album struct {
+							ID    int64  `json:"id"`
+							Title string `json:"title"`
+							Cover string `json:"cover"`
+						} `json:"album"`
+					} `json:"items"`
+				} `json:"songs"`
 			} `json:"data"`
 		}
 
@@ -178,8 +212,16 @@ func (s *SquidService) fetchSongs(ctx context.Context, query string) ([]subsonic
 			return err
 		}
 
+		items := result.Data.Items
+		if len(items) == 0 && len(result.Data.Tracks.Items) > 0 {
+			items = result.Data.Tracks.Items
+		}
+		if len(items) == 0 && len(result.Data.Songs.Items) > 0 {
+			items = result.Data.Songs.Items
+		}
+
 		songs = []subsonic.Song{}
-		for i, item := range result.Data.Items {
+		for i, item := range items {
 			if s.cfg.SearchLimit > 0 && i >= s.cfg.SearchLimit {
 				break
 			}
