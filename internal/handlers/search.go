@@ -6,7 +6,7 @@ import (
 	"jetstream/internal/config"
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
@@ -63,24 +63,27 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 
 		resp, err := h.client.Do(req)
 		if err != nil {
-			log.Printf("[Search] [ERROR] Upstream request failed: %v", err)
+			slog.Error("Upstream search request failed", "error", err)
 			return
 		}
+
 		defer resp.Body.Close()
 
 		navidromeResult = &subsonic.Response{}
 		if err := xml.NewDecoder(resp.Body).Decode(navidromeResult); err != nil {
-			log.Printf("[Search] [ERROR] Decoding Upstream response: %v", err)
+			slog.Error("Decoding Upstream search response", "error", err)
 		}
+
 	}()
 
 	// B. Squid (External)
 	go func() {
 		defer wg.Done()
-		res, err := h.squidService.Search(query)
+		res, err := h.squidService.Search(c.Request.Context(), query)
 		if err == nil {
 			squidResult = res
 		}
+
 	}()
 
 	wg.Wait()
@@ -103,8 +106,12 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	}
 
 	if squidResult != nil {
-		log.Printf("[Search] Squid returned %d songs, %d albums, %d artists, %d playlists for query '%s'",
-			len(squidResult.Song), len(squidResult.Album), len(squidResult.Artist), len(squidResult.Playlist), query)
+		slog.Info("Squid search results",
+			"songs", len(squidResult.Song),
+			"albums", len(squidResult.Album),
+			"artists", len(squidResult.Artist),
+			"playlists", len(squidResult.Playlist),
+			"query", query)
 
 		// Append Songs
 		navidromeResult.SearchResult3.Song = append(navidromeResult.SearchResult3.Song, squidResult.Song...)
@@ -116,7 +123,7 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 		navidromeResult.SearchResult3.Playlist = append(navidromeResult.SearchResult3.Playlist, squidResult.Playlist...)
 
 	} else {
-		log.Printf("[Search] Squid returned 0 results (or error) for query '%s'", query)
+		slog.Debug("Squid returned 0 results (or error)", "query", query)
 	}
 
 	// 3. Return Response
@@ -149,24 +156,27 @@ func (h *SearchHandler) Search2(c *gin.Context) {
 
 		resp, err := h.client.Do(req)
 		if err != nil {
-			log.Printf("[Search2] [ERROR] Upstream request failed: %v", err)
+			slog.Error("Upstream search2 request failed", "error", err)
 			return
 		}
+
 		defer resp.Body.Close()
 
 		navidromeResult = &subsonic.Response{}
 		if err := xml.NewDecoder(resp.Body).Decode(navidromeResult); err != nil {
-			log.Printf("[Search2] [ERROR] Decoding Upstream response: %v", err)
+			slog.Error("Decoding Upstream search2 response", "error", err)
 		}
+
 	}()
 
 	// B. Squid (External)
 	go func() {
 		defer wg.Done()
-		res, err := h.squidService.Search(query)
+		res, err := h.squidService.Search(c.Request.Context(), query)
 		if err == nil {
 			squidResult = res
 		}
+
 	}()
 
 	wg.Wait()
@@ -225,9 +235,10 @@ func (h *SearchHandler) Search(c *gin.Context) {
 
 		resp, err := h.client.Do(req)
 		if err != nil {
-			log.Printf("[Search1] [ERROR] Upstream failure: %v", err)
+			slog.Error("Upstream search1 request failed", "error", err)
 			return
 		}
+
 		defer resp.Body.Close()
 
 		navidromeResult = &subsonic.Response{}
@@ -237,10 +248,11 @@ func (h *SearchHandler) Search(c *gin.Context) {
 	// B. Squid (External)
 	go func() {
 		defer wg.Done()
-		res, err := h.squidService.Search(query)
+		res, err := h.squidService.Search(c.Request.Context(), query)
 		if err == nil {
 			squidResult = res
 		}
+
 	}()
 
 	wg.Wait()
@@ -280,8 +292,9 @@ func (h *SearchHandler) GetTopSongs(c *gin.Context) {
 	}
 
 	if artist != "" {
-		log.Printf("[Search] Fetching top songs for artist: %s", artist)
-		songs, err := h.squidService.GetTopSongsByArtist(artist, count)
+		slog.Info("Fetching top songs", "artist", artist)
+		songs, err := h.squidService.GetTopSongsByArtist(c.Request.Context(), artist, count)
+
 		if err == nil && len(songs) > 0 {
 			resp := subsonic.Response{
 				Status:  "ok",
@@ -335,10 +348,11 @@ func (h *SearchHandler) GetAlbumList2(c *gin.Context) {
 		// B. Squid - Search for "Hits" to get some "random" albums
 		go func() {
 			defer wg.Done()
-			res, err := h.squidService.Search("Hits")
+			res, err := h.squidService.Search(c.Request.Context(), "Hits")
 			if err == nil && res != nil {
 				squidAlbums = res.Album
 			}
+
 		}()
 
 		wg.Wait()

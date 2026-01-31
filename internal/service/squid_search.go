@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"jetstream/pkg/subsonic"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
@@ -13,9 +13,8 @@ import (
 )
 
 // Search performs a search on triton.squid.wtf and maps to Subsonic models
-func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
-	ctx := context.Background()
-	cacheKey := fmt.Sprintf("search:%s", query)
+func (s *SquidService) Search(ctx context.Context, query string) (*subsonic.SearchResult3, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("search:%s", query)
 
 	// Check Cache
 	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
@@ -40,9 +39,9 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 		defer wg.Done()
 		songURL := fmt.Sprintf("%s/search/?s=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
-		songs, err = s.fetchSongs(songURL)
+		songs, err = s.fetchSongs(ctx, songURL)
 		if err != nil {
-			log.Printf("[Search] Error fetching songs: %v", err)
+			slog.Error("Error fetching songs", "error", err, "query", query)
 		}
 	}()
 
@@ -51,9 +50,9 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 		defer wg.Done()
 		albumURL := fmt.Sprintf("%s/search/?al=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
-		albums, err = s.fetchAlbums(albumURL)
+		albums, err = s.fetchAlbums(ctx, albumURL)
 		if err != nil {
-			log.Printf("[Search] Error fetching albums: %v", err)
+			slog.Error("Error fetching albums", "error", err, "query", query)
 		}
 	}()
 
@@ -62,9 +61,9 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 		defer wg.Done()
 		artistURL := fmt.Sprintf("%s/search/?a=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
-		artists, err = s.fetchArtists(artistURL)
+		artists, err = s.fetchArtists(ctx, artistURL)
 		if err != nil {
-			log.Printf("[Search] Error fetching artists: %v", err)
+			slog.Error("Error fetching artists", "error", err, "query", query)
 		}
 	}()
 
@@ -73,9 +72,9 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 		defer wg.Done()
 		playlistURL := fmt.Sprintf("%s/search/?p=%s", s.getCurrentURL(), url.QueryEscape(query))
 		var err error
-		playlists, err = s.fetchPlaylists(playlistURL)
+		playlists, err = s.fetchPlaylists(ctx, playlistURL)
 		if err != nil {
-			log.Printf("[Search] Error fetching playlists: %v", err)
+			slog.Error("Error fetching playlists", "error", err, "query", query)
 		}
 	}()
 
@@ -97,9 +96,9 @@ func (s *SquidService) Search(query string) (*subsonic.SearchResult3, error) {
 }
 
 // SearchOne attempts to find a single song ID matching the artist and title.
-func (s *SquidService) SearchOne(artist, title string) (string, error) {
+func (s *SquidService) SearchOne(ctx context.Context, artist, title string) (string, error) {
 	query := fmt.Sprintf("%s %s", artist, title)
-	res, err := s.Search(query)
+	res, err := s.Search(ctx, query)
 	if err != nil {
 		return "", err
 	}
@@ -108,14 +107,12 @@ func (s *SquidService) SearchOne(artist, title string) (string, error) {
 		return "", fmt.Errorf("no matches found")
 	}
 
-	// Try to find a good match based on title/artist similarity
-	// For now, just take the first one
 	return res.Song[0].ID, nil
 }
 
 // SearchOneArtist attempts to find a single artist ID matching the name.
-func (s *SquidService) SearchOneArtist(name string) (string, error) {
-	res, err := s.Search(name)
+func (s *SquidService) SearchOneArtist(ctx context.Context, name string) (string, error) {
+	res, err := s.Search(ctx, name)
 	if err != nil {
 		return "", err
 	}
@@ -124,14 +121,13 @@ func (s *SquidService) SearchOneArtist(name string) (string, error) {
 		return "", fmt.Errorf("no matches found")
 	}
 
-	// For now, just take the first one
 	return res.Artist[0].ID, nil
 }
 
 // SearchOneAlbum attempts to find a single album ID matching the artist and title.
-func (s *SquidService) SearchOneAlbum(artist, title string) (string, error) {
+func (s *SquidService) SearchOneAlbum(ctx context.Context, artist, title string) (string, error) {
 	query := fmt.Sprintf("%s %s", artist, title)
-	res, err := s.Search(query)
+	res, err := s.Search(ctx, query)
 	if err != nil {
 		return "", err
 	}
@@ -140,18 +136,18 @@ func (s *SquidService) SearchOneAlbum(artist, title string) (string, error) {
 		return "", fmt.Errorf("no matches found")
 	}
 
-	// For now, just take the first one
 	return res.Album[0].ID, nil
 }
 
-func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
-	req, err := http.NewRequest("GET", urlStr, nil)
+func (s *SquidService) fetchSongs(ctx context.Context, urlStr string) ([]subsonic.Song, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := s.client.Do(req)
+
 	if err != nil {
 		return nil, err
 	}
@@ -213,14 +209,15 @@ func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
 	return songs, nil
 }
 
-func (s *SquidService) fetchAlbums(urlStr string) ([]subsonic.Album, error) {
-	req, err := http.NewRequest("GET", urlStr, nil)
+func (s *SquidService) fetchAlbums(ctx context.Context, urlStr string) ([]subsonic.Album, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := s.client.Do(req)
+
 	if err != nil {
 		return nil, err
 	}
@@ -282,14 +279,15 @@ func (s *SquidService) fetchAlbums(urlStr string) ([]subsonic.Album, error) {
 	return albums, nil
 }
 
-func (s *SquidService) fetchArtists(urlStr string) ([]subsonic.Artist, error) {
-	req, err := http.NewRequest("GET", urlStr, nil)
+func (s *SquidService) fetchArtists(ctx context.Context, urlStr string) ([]subsonic.Artist, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := s.client.Do(req)
+
 	if err != nil {
 		return nil, err
 	}
@@ -328,14 +326,15 @@ func (s *SquidService) fetchArtists(urlStr string) ([]subsonic.Artist, error) {
 	}
 	return artists, nil
 }
-func (s *SquidService) fetchPlaylists(urlStr string) ([]subsonic.Playlist, error) {
-	req, err := http.NewRequest("GET", urlStr, nil)
+func (s *SquidService) fetchPlaylists(ctx context.Context, urlStr string) ([]subsonic.Playlist, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := s.client.Do(req)
+
 	if err != nil {
 		return nil, err
 	}

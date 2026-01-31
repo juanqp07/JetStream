@@ -6,6 +6,7 @@ import (
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,10 +37,10 @@ func (h *MetadataHandler) GetAlbum(c *gin.Context) {
 	// 1. Check if it's already an external ID (from search results)
 	if strings.HasPrefix(id, "ext-") {
 		log.Printf("[Metadata] Fetching external album info from Squid: %s", id)
-		album, songs, err := h.squidService.GetAlbum(id)
+		album, songs, err := h.squidService.GetAlbum(c.Request.Context(), id)
 		if err != nil {
 			log.Printf("[Metadata] GetAlbum error for %s: %v", id, err)
-			SendSubsonicError(c, ErrGeneric, err.Error())
+			SendSubsonicError(c, subsonic.ErrGeneric, err.Error())
 			return
 		}
 		resp := subsonic.Response{
@@ -58,7 +59,7 @@ func (h *MetadataHandler) GetAlbum(c *gin.Context) {
 	resolvedID, _, err := ResolveVirtualAlbumID(c, h.proxyHandler, h.squidService, id)
 	if err == nil && resolvedID != id {
 		log.Printf("[Metadata] Resolved local Album ID %s to external ID: %s", id, resolvedID)
-		album, songs, err := h.squidService.GetAlbum(resolvedID)
+		album, songs, err := h.squidService.GetAlbum(c.Request.Context(), resolvedID)
 		if err == nil {
 			resp := subsonic.Response{
 				Status:  "ok",
@@ -83,10 +84,10 @@ func (h *MetadataHandler) GetArtist(c *gin.Context) {
 	// 1. Check if it's already an external ID (from search results)
 	if strings.HasPrefix(id, "ext-") {
 		log.Printf("[Metadata] Fetching external artist info from Squid: %s", id)
-		artist, albums, err := h.squidService.GetArtist(id)
+		artist, albums, err := h.squidService.GetArtist(c.Request.Context(), id)
 		if err != nil {
 			log.Printf("[Metadata] GetArtist error for %s: %v", id, err)
-			SendSubsonicError(c, ErrArtistNotFound, err.Error())
+			SendSubsonicError(c, subsonic.ErrArtistNotFound, err.Error())
 			return
 		}
 		resp := subsonic.Response{
@@ -105,7 +106,7 @@ func (h *MetadataHandler) GetArtist(c *gin.Context) {
 	resolvedID, _, err := ResolveVirtualArtistID(c, h.proxyHandler, h.squidService, id)
 	if err == nil && resolvedID != id {
 		log.Printf("[Metadata] Resolved local Artist ID %s to external ID: %s", id, resolvedID)
-		artist, albums, err := h.squidService.GetArtist(resolvedID)
+		artist, albums, err := h.squidService.GetArtist(c.Request.Context(), resolvedID)
 		if err == nil {
 			resp := subsonic.Response{
 				Status:  "ok",
@@ -129,10 +130,10 @@ func (h *MetadataHandler) GetSong(c *gin.Context) {
 	resolvedID, isVirtual, err := ResolveVirtualID(c, h.proxyHandler, h.squidService, id)
 	if err == nil && isVirtual {
 		log.Printf("[Metadata] Intercepted virtual song metadata request: %s (Resolved: %s)", id, resolvedID)
-		song, err := h.squidService.GetSong(resolvedID)
+		song, err := h.squidService.GetSong(c.Request.Context(), resolvedID)
 		if err != nil {
 			log.Printf("[Metadata] GetSong error for %s: %v", resolvedID, err)
-			SendSubsonicError(c, ErrDataNotFound, "Song not found")
+			SendSubsonicError(c, subsonic.ErrDataNotFound, "Song not found")
 			return
 		}
 
@@ -152,10 +153,10 @@ func (h *MetadataHandler) GetSong(c *gin.Context) {
 func (h *MetadataHandler) GetPlaylist(c *gin.Context) {
 	id := c.Request.FormValue("id")
 	if strings.HasPrefix(id, "ext-") {
-		playlist, songs, err := h.squidService.GetPlaylist(id)
+		playlist, songs, err := h.squidService.GetPlaylist(c.Request.Context(), id)
 		if err != nil {
 			log.Printf("[Metadata] GetPlaylist error for %s: %v", id, err)
-			SendSubsonicError(c, ErrGeneric, err.Error())
+			SendSubsonicError(c, subsonic.ErrGeneric, err.Error())
 			return
 		}
 
@@ -203,8 +204,9 @@ func (h *MetadataHandler) GetPlaylists(c *gin.Context) {
 
 		navidromeResult = &subsonic.Response{}
 		if err := xml.NewDecoder(resp.Body).Decode(navidromeResult); err != nil {
-			log.Printf("[Metadata] [ERROR] Decoding Upstream playlists: %v", err)
+			slog.Error("Decoding Upstream playlists", "error", err)
 		}
+
 	}()
 
 	// B. Squid (External - Featured/Popular)
@@ -212,7 +214,7 @@ func (h *MetadataHandler) GetPlaylists(c *gin.Context) {
 		defer wg.Done()
 		// Since there's no "list all", we show a few featured ones or just leave it
 		// For now, let's try a default search for "Featured" to populate some
-		res, err := h.squidService.Search("Featured")
+		res, err := h.squidService.Search(c.Request.Context(), "Featured")
 		if err == nil && res != nil {
 			squidPlaylists = res.Playlist
 		}
@@ -246,10 +248,10 @@ func (h *MetadataHandler) GetCoverArt(c *gin.Context) {
 
 	if err == nil && isVirtual {
 		log.Printf("[Metadata] Intercepted virtual cover request: %s (Resolved: %s)", id, resolvedID)
-		url, err := h.squidService.GetCoverURL(resolvedID)
+		url, err := h.squidService.GetCoverURL(c.Request.Context(), resolvedID)
 		if err != nil {
 			log.Printf("[Metadata] Cover not found for %s: %v", resolvedID, err)
-			SendSubsonicError(c, ErrDataNotFound, "Cover not found")
+			SendSubsonicError(c, subsonic.ErrDataNotFound, "Cover not found")
 			return
 		}
 
@@ -262,14 +264,14 @@ func (h *MetadataHandler) GetCoverArt(c *gin.Context) {
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("[Metadata] Failed to fetch cover from %s: %v", url, err)
-			SendSubsonicError(c, ErrGeneric, "Failed to fetch cover")
+			SendSubsonicError(c, subsonic.ErrGeneric, "Failed to fetch cover")
 			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("[Metadata] Cover server returned %d for %s", resp.StatusCode, url)
-			SendSubsonicError(c, ErrDataNotFound, "Cover not found")
+			SendSubsonicError(c, subsonic.ErrDataNotFound, "Cover not found")
 			return
 		}
 
@@ -306,7 +308,7 @@ func (h *MetadataHandler) GetLyricsBySongId(c *gin.Context) {
 	resolvedID, isVirtual, _ := ResolveVirtualID(c, h.proxyHandler, h.squidService, id)
 
 	if isVirtual {
-		lyrics, err := h.squidService.GetLyrics(resolvedID)
+		lyrics, err := h.squidService.GetLyrics(c.Request.Context(), resolvedID)
 		if err != nil {
 			log.Printf("[Metadata] Lyrics not found for %s: %v", resolvedID, err)
 			SendSubsonicResponse(c, subsonic.Response{
@@ -364,10 +366,10 @@ func (h *MetadataHandler) GetArtistInfo2(c *gin.Context) {
 func (h *MetadataHandler) GetSimilarArtists(c *gin.Context) {
 	id := c.Request.FormValue("id")
 	if strings.HasPrefix(id, "ext-") {
-		artists, err := h.squidService.GetSimilarArtists(id)
+		artists, err := h.squidService.GetSimilarArtists(c.Request.Context(), id)
 		if err != nil {
 			log.Printf("[Metadata] GetSimilarArtists error for %s: %v", id, err)
-			SendSubsonicError(c, ErrGeneric, err.Error())
+			SendSubsonicError(c, subsonic.ErrGeneric, err.Error())
 			return
 		}
 		resp := subsonic.Response{
@@ -394,9 +396,9 @@ func (h *MetadataHandler) GetMusicDirectory(c *gin.Context) {
 		log.Printf("[Metadata] GetMusicDirectory for external ID: %s", id)
 
 		if strings.Contains(id, "-artist-") {
-			artist, albums, err := h.squidService.GetArtist(id)
+			artist, albums, err := h.squidService.GetArtist(c.Request.Context(), id)
 			if err != nil {
-				SendSubsonicError(c, ErrGeneric, err.Error())
+				SendSubsonicError(c, subsonic.ErrGeneric, err.Error())
 				return
 			}
 			var children []subsonic.Song
@@ -423,9 +425,9 @@ func (h *MetadataHandler) GetMusicDirectory(c *gin.Context) {
 			SendSubsonicResponse(c, resp)
 			return
 		} else if strings.Contains(id, "-album-") {
-			album, songs, err := h.squidService.GetAlbum(id)
+			album, songs, err := h.squidService.GetAlbum(c.Request.Context(), id)
 			if err != nil {
-				SendSubsonicError(c, ErrGeneric, err.Error())
+				SendSubsonicError(c, subsonic.ErrGeneric, err.Error())
 				return
 			}
 			resp := subsonic.Response{
@@ -558,10 +560,10 @@ func (h *MetadataHandler) GetRandomSongs(c *gin.Context) {
 		if artistName != "" {
 			// If artist is provided, get top songs for that artist
 			count := 20
-			squidSongs, err = h.squidService.GetTopSongsByArtist(artistName, count)
+			squidSongs, err = h.squidService.GetTopSongsByArtist(c.Request.Context(), artistName, count)
 		} else {
 			// Otherwise just generic hits
-			res, err = h.squidService.Search("Hits")
+			res, err = h.squidService.Search(c.Request.Context(), "Hits")
 			if err == nil && res != nil {
 				squidSongs = res.Song
 			}
@@ -630,8 +632,10 @@ func (h *MetadataHandler) GetSongsByGenre(c *gin.Context) {
 	// B. Squid (External) - Search for the genre
 	go func() {
 		defer wg.Done()
+		var res *subsonic.SearchResult3 // Declare res here
+		var err error                   // Declare err here
 		if genre != "" {
-			res, err := h.squidService.Search(genre)
+			res, err = h.squidService.Search(c.Request.Context(), "Hits")
 			if err == nil && res != nil {
 				squidSongs = res.Song
 			}
@@ -669,9 +673,10 @@ func (h *MetadataHandler) GetSimilarSongs(c *gin.Context) {
 	}
 
 	if strings.HasPrefix(id, "ext-") {
-		artist, _, err := h.squidService.GetArtist(id)
+		artist, _, err := h.squidService.GetArtist(c.Request.Context(), id)
 		if err == nil {
-			songs, err := h.squidService.GetTopSongsByArtist(artist.Name, count)
+			songs, err := h.squidService.GetTopSongsByArtist(c.Request.Context(), artist.Name, count)
+
 			if err == nil {
 				resp := subsonic.Response{
 					Status:  "ok",

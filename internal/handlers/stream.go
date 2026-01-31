@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"jetstream/internal/service"
+	"jetstream/pkg/subsonic"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,7 +33,7 @@ func NewHandler(squidService *service.SquidService, syncService *service.SyncSer
 func (h *Handler) Stream(c *gin.Context) {
 	id := c.Query("id")
 	if id == "" {
-		SendSubsonicError(c, ErrRequiredParameter, "Missing id parameter")
+		SendSubsonicError(c, subsonic.ErrRequiredParameter, "Missing id parameter")
 		return
 	}
 
@@ -45,9 +48,9 @@ func (h *Handler) Stream(c *gin.Context) {
 	log.Printf("[Stream] [%s] %s %s (Resolved: %s)", c.GetHeader("User-Agent"), c.Request.Method, c.Request.URL.String(), externalID)
 
 	// 2. Resolve Metadata (Check Local Library first for real or ghost files)
-	song, err := h.squidService.GetSong(externalID)
+	song, err := h.squidService.GetSong(c.Request.Context(), externalID)
 	if err != nil {
-		SendSubsonicError(c, ErrDataNotFound, "Failed to resolve song info: "+err.Error())
+		SendSubsonicError(c, subsonic.ErrDataNotFound, "Failed to resolve song info: "+err.Error())
 		return
 	}
 
@@ -75,16 +78,16 @@ func (h *Handler) Stream(c *gin.Context) {
 	}
 
 	// 4. Fallback: Get Stream URL from Squid Service & Proxy
-	trackInfo, err := h.squidService.GetStreamURL(externalID)
+	trackInfo, err := h.squidService.GetStreamURL(c.Request.Context(), externalID)
 	if err != nil {
-		SendSubsonicError(c, ErrGeneric, "Failed to resolve stream: "+err.Error())
+		SendSubsonicError(c, subsonic.ErrGeneric, "Failed to resolve stream: "+err.Error())
 		return
 	}
 
 	// SYNC-ON-PLAY: Trigger background sync for this song
 	go func() {
-		if err := h.syncService.SyncSong(song); err != nil {
-			log.Printf("[Stream] Failed to sync song %s: %v", externalID, err)
+		if err := h.syncService.SyncSong(context.Background(), song); err != nil {
+			slog.Error("Failed to sync song", "id", externalID, "error", err)
 		}
 	}()
 

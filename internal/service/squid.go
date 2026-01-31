@@ -1,20 +1,25 @@
 package service
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"jetstream/internal/config"
 	"jetstream/pkg/subsonic"
-	"log"
 	"net/http"
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"github.com/redis/go-redis/v9"
 )
 
-const UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0"
+const (
+	UserAgent   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0"
+	CachePrefix = "jetstream:cache:v1:"
+)
 
 type SquidService struct {
 	client          *http.Client
@@ -83,7 +88,7 @@ func (s *SquidService) rotateURL() {
 	defer s.urlMutex.Unlock()
 	if len(s.cfg.SquidURLs) > 0 {
 		s.currentURLIndex = (s.currentURLIndex + 1) % len(s.cfg.SquidURLs)
-		log.Printf("[Squid] Rotated to fallback URL: %s", s.cfg.SquidURLs[s.currentURLIndex])
+		slog.Info("Rotated fallback URL", "url", s.cfg.SquidURLs[s.currentURLIndex])
 	}
 }
 
@@ -103,18 +108,18 @@ func (s *SquidService) tryWithFallback(action func(baseURL string) error) error 
 		}
 
 		lastErr = err
-		log.Printf("[Squid] Request failed with %s: %v", baseURL, err)
+		slog.Warn("Squid request failed", "baseURL", baseURL, "error", err, "attempt", attempt+1)
 
 		if attempt < maxAttempts-1 {
 			s.rotateURL()
 		}
 	}
 
-	log.Printf("[Squid] All endpoints failed")
+	slog.Error("All fallback endpoints failed")
 	return lastErr
 }
 
-func (s *SquidService) GetStreamURL(trackID string) (*TrackInfo, error) {
+func (s *SquidService) GetStreamURL(ctx context.Context, trackID string) (*TrackInfo, error) {
 	_, _, _, rawID := subsonic.ParseID(trackID)
 	quality := "LOSSLESS"
 
@@ -122,13 +127,13 @@ func (s *SquidService) GetStreamURL(trackID string) (*TrackInfo, error) {
 	err := s.tryWithFallback(func(baseURL string) error {
 		url := fmt.Sprintf("%s/track/?id=%s&quality=%s", baseURL, rawID, quality)
 
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("User-Agent", UserAgent)
 
-		fmt.Printf("[Squid] Requesting Stream Info: %s\n", url)
+		slog.Debug("Requesting Stream Info", "url", url)
 
 		resp, err := s.client.Do(req)
 		if err != nil {
@@ -168,7 +173,7 @@ func (s *SquidService) GetStreamURL(trackID string) (*TrackInfo, error) {
 			return fmt.Errorf("no download urls in manifest")
 		}
 
-		fmt.Printf("[Squid] Decoded Stream URL: %s\n", manifest.URLs[0])
+		slog.Debug("Decoded Stream URL", "trackID", trackID, "mime", manifest.MimeType)
 
 		trackInfo = &TrackInfo{
 			DownloadURL: manifest.URLs[0],
@@ -182,6 +187,7 @@ func (s *SquidService) GetStreamURL(trackID string) (*TrackInfo, error) {
 	}
 	return trackInfo, nil
 }
+
 func (s *SquidService) GetRedis() *redis.Client {
 	return s.redis
 }

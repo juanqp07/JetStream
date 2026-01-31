@@ -6,6 +6,7 @@ import (
 	"jetstream/internal/handlers"
 	"jetstream/internal/service"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -153,15 +154,16 @@ func main() {
 			c.JSON(400, gin.H{"error": "id is required"})
 			return
 		}
-		album, songs, err := squidService.GetAlbum(id)
+		album, songs, err := squidService.GetAlbum(context.Background(), id)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "Failed to fetch album info: " + err.Error()})
 			return
 		}
-		if err := syncService.SyncAlbum(album, songs); err != nil {
+		if err := syncService.SyncAlbum(context.Background(), album, songs); err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
 		}
+
 		c.JSON(200, gin.H{"status": "synced", "id": id})
 	})
 
@@ -172,9 +174,10 @@ func main() {
 
 	// 5. Graceful Shutdown
 	go func() {
-		log.Printf("Starting JetStream on port %s", cfg.Port)
+		slog.Info("Starting JetStream", "port", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %s\n", err)
+			slog.Error("Listen error", "error", err)
+			os.Exit(1)
 		}
 	}()
 

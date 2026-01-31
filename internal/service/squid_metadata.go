@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"jetstream/pkg/subsonic"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,11 +13,11 @@ import (
 )
 
 // GetLyrics fetches lyrics for a track ID
-func (s *SquidService) GetLyrics(id string) (string, error) {
+func (s *SquidService) GetLyrics(ctx context.Context, id string) (string, error) {
 	_, _, _, numericID := subsonic.ParseID(id)
 
 	urlStr := fmt.Sprintf("%s/lyrics/?id=%s", s.getCurrentURL(), numericID)
-	req, _ := http.NewRequest("GET", urlStr, nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -40,9 +40,8 @@ func (s *SquidService) GetLyrics(id string) (string, error) {
 }
 
 // GetSong fetches song details from Squid
-func (s *SquidService) GetSong(id string) (*subsonic.Song, error) {
-	ctx := context.Background()
-	cacheKey := fmt.Sprintf("song:%s", id)
+func (s *SquidService) GetSong(ctx context.Context, id string) (*subsonic.Song, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("song:%s", id)
 
 	// Check Cache
 	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
@@ -56,15 +55,15 @@ func (s *SquidService) GetSong(id string) (*subsonic.Song, error) {
 
 	// Try /info/ first for clean metadata
 	urlStr := fmt.Sprintf("%s/info/?id=%s", s.getCurrentURL(), numericID)
-	req, _ := http.NewRequest("GET", urlStr, nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := s.client.Do(req)
 
 	if err != nil || resp.StatusCode != http.StatusOK {
-		// Fallback to /track/ if /info/ fails (sometimes /track/ has more data or is more reliable)
-		log.Printf("[Squid] /info/ failed for %s, trying /track/", numericID)
+		// Fallback to /track/ if /info/ fails
+		slog.Warn("/info/ failed, trying /track/", "numericID", numericID)
 		urlStr = fmt.Sprintf("%s/track/?id=%s", s.getCurrentURL(), numericID)
-		req, _ = http.NewRequest("GET", urlStr, nil)
+		req, _ = http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err = s.client.Do(req)
 		if err != nil || resp.StatusCode != http.StatusOK {
@@ -123,9 +122,8 @@ func (s *SquidService) GetSong(id string) (*subsonic.Song, error) {
 	return song, nil
 }
 
-func (s *SquidService) GetAlbum(id string) (*subsonic.Album, []subsonic.Song, error) {
-	ctx := context.Background()
-	cacheKey := fmt.Sprintf("album:%s", id)
+func (s *SquidService) GetAlbum(ctx context.Context, id string) (*subsonic.Album, []subsonic.Song, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("album:%s", id)
 
 	// Check Cache
 	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
@@ -148,7 +146,7 @@ func (s *SquidService) GetAlbum(id string) (*subsonic.Album, []subsonic.Song, er
 	err := s.tryWithFallback(func(baseURL string) error {
 		urlStr := fmt.Sprintf("%s/album/?id=%s", baseURL, numericID)
 
-		req, _ := http.NewRequest("GET", urlStr, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err := s.client.Do(req)
 		if err != nil {
@@ -245,10 +243,9 @@ func (s *SquidService) GetAlbum(id string) (*subsonic.Album, []subsonic.Song, er
 	return album, songs, nil
 }
 
-// GetArtist fetches artist details (and top albums/songs usually, but Subsonic getArtist expects albums)
-func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album, error) {
-	ctx := context.Background()
-	cacheKey := fmt.Sprintf("artist:%s", id)
+// GetArtist fetches artist details
+func (s *SquidService) GetArtist(ctx context.Context, id string) (*subsonic.Artist, []subsonic.Album, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("artist:%s", id)
 
 	// Check Cache
 	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
@@ -284,7 +281,7 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 	go func() {
 		defer wg.Done()
 		metaURL := fmt.Sprintf("%s/artist/?id=%s", s.getCurrentURL(), numericID)
-		reqMeta, _ := http.NewRequest("GET", metaURL, nil)
+		reqMeta, _ := http.NewRequestWithContext(ctx, "GET", metaURL, nil)
 		reqMeta.Header.Set("User-Agent", UserAgent)
 		respMeta, err := s.client.Do(reqMeta)
 
@@ -306,7 +303,7 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 	go func() {
 		defer wg.Done()
 		urlStr := fmt.Sprintf("%s/artist/?f=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequest("GET", urlStr, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err := s.client.Do(req)
 		if err != nil {
@@ -368,7 +365,7 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 			Name:     alb.Title,
 			Artist:   artistName,
 			ArtistID: artist.ID,
-			CoverArt: albumID, // Explicitly set CoverArt to Album ID
+			CoverArt: albumID,
 			IsDir:    true,
 		})
 	}
@@ -382,9 +379,8 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 	return artist, albums, nil
 }
 
-func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.Song, error) {
-	ctx := context.Background()
-	cacheKey := fmt.Sprintf("playlist:%s", id)
+func (s *SquidService) GetPlaylist(ctx context.Context, id string) (*subsonic.Playlist, []subsonic.Song, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("playlist:%s", id)
 
 	// Check Cache
 	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
@@ -397,8 +393,8 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 	_, _, _, uuid := subsonic.ParseID(id)
 
 	urlStr := fmt.Sprintf("%s/playlist/?id=%s", s.getCurrentURL(), uuid)
-	log.Printf("[Squid] [DEBUG] GET %s", urlStr)
-	req, _ := http.NewRequest("GET", urlStr, nil)
+	slog.Debug("Squid Playlist Request", "url", urlStr)
+	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -407,7 +403,7 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[Squid] [ERROR] Playlist API returned status: %d", resp.StatusCode)
+		slog.Error("Playlist API returned error", "status", resp.StatusCode)
 		return nil, nil, fmt.Errorf("playlist not found or api error")
 	}
 
@@ -485,9 +481,8 @@ func (s *SquidService) GetPlaylist(id string) (*subsonic.Playlist, []subsonic.So
 	return playlist, songs, nil
 }
 
-func (s *SquidService) GetCoverURL(id string) (string, error) {
-	ctx := context.Background()
-	cacheKey := fmt.Sprintf("cover:%s", id)
+func (s *SquidService) GetCoverURL(ctx context.Context, id string) (string, error) {
+	cacheKey := CachePrefix + fmt.Sprintf("cover:%s", id)
 
 	// Check Cache
 	if val, err := s.redis.Get(ctx, cacheKey).Result(); err == nil && val != "" {
@@ -505,7 +500,7 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 		numericID := parts[3]
 
 		urlStr := fmt.Sprintf("%s/album/?id=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequest("GET", urlStr, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err2 := s.client.Do(req)
 		if err2 != nil {
@@ -535,7 +530,7 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 		numericID := parts[3]
 
 		urlStr := fmt.Sprintf("%s/info/?id=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequest("GET", urlStr, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err2 := s.client.Do(req)
 		if err2 != nil {
@@ -567,7 +562,7 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 		numericID := parts[3]
 
 		urlStr := fmt.Sprintf("%s/artist/?id=%s", s.getCurrentURL(), numericID)
-		req, _ := http.NewRequest("GET", urlStr, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err2 := s.client.Do(req)
 		if err2 != nil {
@@ -592,7 +587,7 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 	} else if strings.Contains(id, "-playlist-") {
 		_, _, _, uuid := subsonic.ParseID(id)
 		urlStr := fmt.Sprintf("%s/playlist/?id=%s", s.getCurrentURL(), uuid)
-		req, _ := http.NewRequest("GET", urlStr, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err2 := s.client.Do(req)
 		if err2 != nil {
@@ -619,17 +614,17 @@ func (s *SquidService) GetCoverURL(id string) (string, error) {
 	}
 
 	if coverURL != "" {
-		s.redis.Set(ctx, cacheKey, coverURL, 7*24*time.Hour) // Cache covers for 1 week
+		s.redis.Set(ctx, cacheKey, coverURL, 7*24*time.Hour)
 	}
 
 	return coverURL, err
 }
 
-func (s *SquidService) GetSimilarArtists(id string) ([]subsonic.Artist, error) {
+func (s *SquidService) GetSimilarArtists(ctx context.Context, id string) ([]subsonic.Artist, error) {
 	_, _, _, numericID := subsonic.ParseID(id)
 	urlStr := fmt.Sprintf("%s/artist/similar/?id=%s", s.getCurrentURL(), numericID)
 
-	req, _ := http.NewRequest("GET", urlStr, nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -664,9 +659,9 @@ func (s *SquidService) GetSimilarArtists(id string) ([]subsonic.Artist, error) {
 	return artists, nil
 }
 
-func (s *SquidService) GetTopSongsByArtist(artistName string, count int) ([]subsonic.Song, error) {
+func (s *SquidService) GetTopSongsByArtist(ctx context.Context, artistName string, count int) ([]subsonic.Song, error) {
 	// We use the search endpoint to get popular tracks for the artist
-	res, err := s.Search(artistName)
+	res, err := s.Search(ctx, artistName)
 	if err != nil {
 		return nil, err
 	}

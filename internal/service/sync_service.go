@@ -6,7 +6,7 @@ import (
 	"io"
 	"jetstream/internal/config"
 	"jetstream/pkg/subsonic"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,17 +32,17 @@ func NewSyncService(squid *SquidService, cfg *config.Config) *SyncService {
 	}
 }
 
-func (s *SyncService) SyncAlbum(album *subsonic.Album, songs []subsonic.Song) error {
-	log.Printf("[SyncService] Syncing all tracks for album: %s", album.Title)
+func (s *SyncService) SyncAlbum(ctx context.Context, album *subsonic.Album, songs []subsonic.Song) error {
+	slog.Info("Syncing all tracks for album", "album", album.Title)
 	for _, song := range songs {
-		if err := s.SyncSong(&song); err != nil {
-			log.Printf("[SyncService] Failed to sync song %s: %v", song.Title, err)
+		if err := s.SyncSong(ctx, &song); err != nil {
+			slog.Error("Failed to sync song", "title", song.Title, "error", err)
 		}
 	}
 	return nil
 }
 
-func (s *SyncService) SyncSong(song *subsonic.Song) error {
+func (s *SyncService) SyncSong(ctx context.Context, song *subsonic.Song) error {
 	// 1. Determine local path
 	artistDir := s.SanitizePath(song.Artist)
 	albumDir := s.SanitizePath(song.Album)
@@ -60,12 +60,12 @@ func (s *SyncService) SyncSong(song *subsonic.Song) error {
 	if song.CoverArt != "" {
 		coverPath := filepath.Join(targetDir, "cover.jpg")
 		if _, err := os.Stat(coverPath); os.IsNotExist(err) {
-			log.Printf("[SyncService] Saving cover.jpg for album in: %s", targetDir)
-			coverData, err := s.downloadArt(song.CoverArt)
+			slog.Debug("Saving cover.jpg for album", "dir", targetDir)
+			coverData, err := s.downloadArt(ctx, song.CoverArt)
 			if err == nil {
 				os.WriteFile(coverPath, coverData, 0644)
 			} else {
-				log.Printf("[SyncService] Failed to save cover.jpg: %v", err)
+				slog.Warn("Failed to save cover.jpg", "error", err)
 			}
 		}
 	}
@@ -76,18 +76,19 @@ func (s *SyncService) SyncSong(song *subsonic.Song) error {
 	}
 
 	// 4. Get Stream URL
-	info, err := s.squid.GetStreamURL(song.ID)
+	info, err := s.squid.GetStreamURL(ctx, song.ID)
 	if err != nil {
 		return err
 	}
 
 	// 5. Download and Transcode
-	log.Printf("[SyncService] Downloading and transcoding to %s: %s", format, outputPath)
-	return s.downloadAndTranscode(song, info.DownloadURL, outputPath, format)
+	slog.Info("Downloading and transcoding", "format", format, "path", outputPath)
+	return s.downloadAndTranscode(ctx, song, info.DownloadURL, outputPath, format)
 }
 
-func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath, format string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+func (s *SyncService) downloadAndTranscode(ctx context.Context, song *subsonic.Song, url, outputPath, format string) error {
+	// Root context with timeout for the whole operation
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
 	var codec string
@@ -107,9 +108,9 @@ func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath,
 	var cleanup func()
 	if song.CoverArt != "" {
 		var err error
-		coverPath, cleanup, err = s.downloadCoverToTemp(song.CoverArt)
+		coverPath, cleanup, err = s.downloadCoverToTemp(ctx, song.CoverArt)
 		if err != nil {
-			log.Printf("[SyncService] Failed to download cover art for %s: %v (continuing without it)", song.ID, err)
+			slog.Warn("Failed to download cover art", "songID", song.ID, "error", err)
 		} else {
 			defer cleanup()
 		}
@@ -127,8 +128,6 @@ func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath,
 	switch format {
 	case "opus":
 		args = append(args, "-c:a", codec, "-b:a", "128k")
-		// Opus with Ogg doesn't play nice with MJPEG stream mapping in all FFmpeg versions.
-		// Since we now save cover.jpg in the folder, we'll skip embedding to ensure speed and stability.
 		args = append(args, "-map", "0:a")
 
 	case "mp3":
@@ -187,11 +186,11 @@ func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath,
 	var ffmpegFormat string
 	switch format {
 	case "opus":
-		ffmpegFormat = "opus" // or "ogg"
+		ffmpegFormat = "opus"
 	case "mp3":
 		ffmpegFormat = "mp3"
 	case "aac":
-		ffmpegFormat = "adts" // standard for AAC streams
+		ffmpegFormat = "adts"
 	}
 
 	if ffmpegFormat != "" {
@@ -199,8 +198,7 @@ func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath,
 	}
 	args = append(args, "-y", tmpOutputPath)
 
-	// Log the command for debugging
-	log.Printf("[SyncService] FFmpeg command: ffmpeg %s", strings.Join(args, " "))
+	slog.Debug("FFmpeg command", "args", strings.Join(args, " "))
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	output, err := cmd.CombinedOutput()
@@ -211,8 +209,7 @@ func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath,
 			return fmt.Errorf("ffmpeg timed out")
 		}
 
-		log.Printf("[SyncService] FFmpeg failed (Exit: %v). Output: %s", err, string(output))
-		log.Printf("[SyncService] Retrying without cover art or complex mapping...")
+		slog.Warn("FFmpeg failed, retrying without complex mapping", "error", err, "output", string(output))
 
 		// Fallback: Transcode without cover art
 		argsNoCover := []string{"-i", url}
@@ -232,44 +229,38 @@ func (s *SyncService) downloadAndTranscode(song *subsonic.Song, url, outputPath,
 			"-y", tmpOutputPath,
 		)
 
-		log.Printf("[SyncService] Fallback FFmpeg command: ffmpeg %s", strings.Join(argsNoCover, " "))
+		slog.Debug("Fallback FFmpeg command", "args", strings.Join(argsNoCover, " "))
 		cmdFallback := exec.CommandContext(ctx, "ffmpeg", argsNoCover...)
 		if fallbackOutput, fallbackErr := cmdFallback.CombinedOutput(); fallbackErr != nil {
-			log.Printf("[SyncService] Fallback FFmpeg also failed: %v. Output: %s", fallbackErr, string(fallbackOutput))
+			slog.Error("Fallback FFmpeg failed", "error", fallbackErr, "output", string(fallbackOutput))
 			os.Remove(tmpOutputPath)
 			return fmt.Errorf("ffmpeg failed: %v", fallbackErr)
 		}
 	}
 
-	// Rename temp file to final destination
 	if err := os.Rename(tmpOutputPath, outputPath); err != nil {
-		log.Printf("[SyncService] Failed to move temp file to %s: %v", outputPath, err)
+		slog.Error("Failed to move temp file", "from", tmpOutputPath, "to", outputPath, "error", err)
 		return err
 	}
 
-	// Verify output file
 	if info, err := os.Stat(outputPath); err == nil {
-		sizeMB := float64(info.Size()) / 1024 / 1024
-		log.Printf("[SyncService] Successfully created %s (%.2f MB)", outputPath, sizeMB)
+		slog.Info("Successfully synced", "path", outputPath, "sizeMB", float64(info.Size())/1024/1024)
 	}
 
 	return nil
 }
 
-func (s *SyncService) downloadCoverToTemp(coverID string) (string, func(), error) {
-	// Download cover art
-	coverData, err := s.downloadArt(coverID)
+func (s *SyncService) downloadCoverToTemp(ctx context.Context, coverID string) (string, func(), error) {
+	coverData, err := s.downloadArt(ctx, coverID)
 	if err != nil {
 		return "", nil, err
 	}
 
-	// Create temp file
 	tmpFile, err := os.CreateTemp("", "cover-*.jpg")
 	if err != nil {
 		return "", nil, err
 	}
 
-	// Write data
 	if _, err := tmpFile.Write(coverData); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpFile.Name())
@@ -277,30 +268,27 @@ func (s *SyncService) downloadCoverToTemp(coverID string) (string, func(), error
 	}
 	tmpFile.Close()
 
-	// Return path and cleanup function
 	cleanup := func() {
 		os.Remove(tmpFile.Name())
 	}
 
-	log.Printf("[SyncService] Downloaded cover art to temp file: %s (%d bytes)", tmpFile.Name(), len(coverData))
+	slog.Debug("Downloaded cover art to temp file", "path", tmpFile.Name(), "size", len(coverData))
 	return tmpFile.Name(), cleanup, nil
 }
 
-func (s *SyncService) downloadArt(coverID string) ([]byte, error) {
-	// If coverID looks like a URL, use it, otherwise use squid service to proxy
+func (s *SyncService) downloadArt(ctx context.Context, coverID string) ([]byte, error) {
 	var url string
 	var err error
 	if strings.HasPrefix(coverID, "http") {
 		url = coverID
 	} else {
-		url, err = s.squid.GetCoverURL(coverID)
+		url, err = s.squid.GetCoverURL(ctx, coverID)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Create request with proper headers
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/xml"
+	"fmt"
 	"jetstream/internal/service"
 	"jetstream/pkg/subsonic"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,8 +33,8 @@ func SendSubsonicResponse(c *gin.Context, resp subsonic.Response) {
 // SendSubsonicError sends a standardized Subsonic error response.
 func SendSubsonicError(c *gin.Context, code int, message string) {
 	resp := subsonic.Response{
-		Status:  "failed",
-		Version: "1.16.1",
+		Status:  subsonic.StatusFailed,
+		Version: subsonic.Version,
 		Error: &subsonic.Error{
 			Code:    code,
 			Message: message,
@@ -49,7 +51,7 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 		return navidromeID, true, nil
 	}
 
-	log.Printf("[Resolver] [DEBUG] Attempting to resolve Navidrome ID: %s", navidromeID)
+	slog.Debug("Attempting to resolve Navidrome ID", "navidromeID", navidromeID)
 
 	// Force XML and let http.Client handle decompression
 	parsedURL, _ := url.Parse(proxy.GetTargetURL() + "/rest/getSong.view")
@@ -65,7 +67,7 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[Resolver] [ERROR] Querying Navidrome: %v", err)
+		slog.Error("Querying Navidrome", "error", err)
 		return "", false, err
 	}
 	defer resp.Body.Close()
@@ -80,12 +82,12 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 	}
 
 	if err := xml.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("[Resolver] [ERROR] Decoding Navidrome response: %v", err)
+		slog.Error("Decoding Navidrome response", "error", err)
 		return "", false, err
 	}
 
-	log.Printf("[Resolver] [DEBUG] Navidrome reported path: %s", result.Song.Path)
-	log.Printf("[Resolver] [DEBUG] Navidrome reported metadata: %s - %s", result.Song.Artist, result.Song.Title)
+	slog.Debug("Navidrome reported path", "path", result.Song.Path)
+	slog.Debug("Navidrome reported metadata", "metadata", fmt.Sprintf("%s - %s", result.Song.Artist, result.Song.Title))
 
 	if result.Song.Path == "" {
 		return navidromeID, false, nil
@@ -94,7 +96,7 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 	// 1. Try Path-based Resolution first (Fastest)
 	match := idInPathRegex.FindStringSubmatch(result.Song.Path)
 	if len(match) > 1 {
-		log.Printf("[Resolver] [SUCCESS] Resolved %s -> %s (from path)", navidromeID, match[1])
+		slog.Info("Resolved from path", "id", navidromeID, "resolved", match[1])
 		return match[1], true, nil
 	}
 
@@ -110,7 +112,7 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 			// Ghost check: Dummy files with covers can still be up to 500KB-1MB
 			if info.Size() < 1024*1024 { // 1MB threshold
 				isGhost = true
-				log.Printf("[Resolver] [DEBUG] File %s is small (%d bytes). Treating as virtual/ghost.", fullPath, info.Size())
+				slog.Debug("File is small, treating as virtual/ghost", "path", fullPath, "size", info.Size())
 			}
 
 			// Check tags regardless of size if it's a regular file
@@ -121,28 +123,30 @@ func ResolveVirtualID(c *gin.Context, proxy *ProxyHandler, squid *service.SquidS
 				for _, f := range frames {
 					utcf, ok := f.(id3v2.UserDefinedTextFrame)
 					if ok && utcf.Description == "TIDAL_ID" {
-						log.Printf("[Resolver] [SUCCESS] Resolved %s -> %s (from ID3 tag)", navidromeID, utcf.Value)
+						slog.Info("Resolved from ID3 tag", "id", navidromeID, "resolved", utcf.Value)
 						return utcf.Value, true, nil
 					}
+
 				}
 			} else {
-				log.Printf("[Resolver] [DEBUG] Could not read ID3 tags for %s: %v", fullPath, err)
+				slog.Debug("Could not read ID3 tags", "path", fullPath, "error", err)
 			}
+
 		}
 	} else if os.IsNotExist(err) {
-		log.Printf("[Resolver] [DEBUG] File not found on disk: %s. Treating as virtual.", fullPath)
+		slog.Debug("File not found on disk, treating as virtual", "path", fullPath)
 		isGhost = true
 	}
 
 	// 3. Robust Metadata Search Fallback (Self-Healing)
 	if isGhost && result.Song.Artist != "" && result.Song.Title != "" {
-		log.Printf("[Resolver] [FALLBACK] Performing search lookup for: %s - %s", result.Song.Artist, result.Song.Title)
-		resolvedID, err := squid.SearchOne(result.Song.Artist, result.Song.Title)
+		slog.Warn("Performing search lookup", "artist", result.Song.Artist, "title", result.Song.Title)
+		resolvedID, err := squid.SearchOne(c.Request.Context(), result.Song.Artist, result.Song.Title)
 		if err == nil {
-			log.Printf("[Resolver] [SUCCESS] Self-healed %s -> %s via metadata search", navidromeID, resolvedID)
+			slog.Info("Self-healed via metadata search", "id", navidromeID, "resolved", resolvedID)
 			return resolvedID, true, nil
 		}
-		log.Printf("[Resolver] [ERROR] Fallback search failed for %s - %s: %v", result.Song.Artist, result.Song.Title, err)
+		slog.Error("Fallback search failed", "artist", result.Song.Artist, "title", result.Song.Title, "error", err)
 	}
 
 	log.Printf("[Resolver] [FAIL] Could not resolve %s to external ID", navidromeID)
@@ -155,7 +159,7 @@ func ResolveVirtualArtistID(c *gin.Context, proxy *ProxyHandler, squid *service.
 		return navidromeID, true, nil
 	}
 
-	log.Printf("[Resolver] [DEBUG] Resolving Artist ID: %s", navidromeID)
+	slog.Debug("Resolving Artist ID", "id", navidromeID)
 
 	parsedURL, _ := url.Parse(proxy.GetTargetURL() + "/rest/getArtist.view")
 	q := c.Request.URL.Query()
@@ -188,9 +192,9 @@ func ResolveVirtualArtistID(c *gin.Context, proxy *ProxyHandler, squid *service.
 		return navidromeID, false, nil
 	}
 
-	resolvedID, err := squid.SearchOneArtist(result.Artist.Name)
+	resolvedID, err := squid.SearchOneArtist(c.Request.Context(), result.Artist.Name)
 	if err == nil {
-		log.Printf("[Resolver] [SUCCESS] Resolved Artist %s -> %s (%s)", navidromeID, resolvedID, result.Artist.Name)
+		slog.Info("Resolved Artist", "id", navidromeID, "resolved", resolvedID, "name", result.Artist.Name)
 		return resolvedID, true, nil
 	}
 
@@ -203,7 +207,7 @@ func ResolveVirtualAlbumID(c *gin.Context, proxy *ProxyHandler, squid *service.S
 		return navidromeID, true, nil
 	}
 
-	log.Printf("[Resolver] [DEBUG] Resolving Album ID: %s", navidromeID)
+	slog.Debug("Resolving Album ID", "id", navidromeID)
 
 	parsedURL, _ := url.Parse(proxy.GetTargetURL() + "/rest/getAlbum.view")
 	q := c.Request.URL.Query()
@@ -237,25 +241,11 @@ func ResolveVirtualAlbumID(c *gin.Context, proxy *ProxyHandler, squid *service.S
 		return navidromeID, false, nil
 	}
 
-	resolvedID, err := squid.SearchOneAlbum(result.Album.Artist, result.Album.Title)
+	resolvedID, err := squid.SearchOneAlbum(c.Request.Context(), result.Album.Artist, result.Album.Title)
 	if err == nil {
-		log.Printf("[Resolver] [SUCCESS] Resolved Album %s -> %s (%s - %s)", navidromeID, resolvedID, result.Album.Artist, result.Album.Title)
+		slog.Info("Resolved Album", "id", navidromeID, "resolved", resolvedID, "artist", result.Album.Artist, "title", result.Album.Title)
 		return resolvedID, true, nil
 	}
 
 	return navidromeID, false, nil
 }
-
-// Subsonic Error Codes
-const (
-	ErrGeneric           = 0
-	ErrRequiredParameter = 10
-	ErrClientVersionOld  = 20
-	ErrServerVersionOld  = 30
-	ErrWrongUserPass     = 40
-	ErrNotAuthorized     = 50
-	ErrTrialExpired      = 60
-	ErrDataNotFound      = 70
-	ErrUserNotAuthorized = 80
-	ErrArtistNotFound    = 70 // Re-using 70
-)
