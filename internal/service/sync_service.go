@@ -70,9 +70,12 @@ func (s *SyncService) SyncSong(ctx context.Context, song *subsonic.Song) error {
 		}
 	}
 
-	// 3. Check if song file exists
-	if _, err := os.Stat(outputPath); err == nil {
-		return nil // Already synced
+	// 3. Check if song file exists and is complete
+	if info, err := os.Stat(outputPath); err == nil {
+		if info.Size() >= 1024*1024 { // 1MB threshold
+			return nil // Already synced and seems complete
+		}
+		slog.Warn("Existing file is too small, likely incomplete. Re-syncing.", "path", outputPath, "size", info.Size())
 	}
 
 	// 4. Get Stream URL

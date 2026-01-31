@@ -67,14 +67,14 @@ func (h *Handler) Stream(c *gin.Context) {
 	searchResultPath := filepath.Join(h.syncService.SearchFolder(), artistDir, albumDir, ghostFileName)
 
 	if info, err := os.Stat(localPath); err == nil {
-		if info.Size() > 50000 { // Large enough to be real
+		if info.Size() >= 1024*1024 { // At least 1MB to be considered a real file
 			log.Printf("[Stream] Serving local file from jetstream: %s", localPath)
 			c.File(localPath)
 			return
 		}
-		log.Printf("[Stream] Small file detected in jetstream at %s, treating as ghost", localPath)
-	} else if info, err := os.Stat(searchResultPath); err == nil && info.Size() < 20000 {
-		log.Printf("[Stream] Ghost file detected in search folder: %s", searchResultPath)
+		log.Printf("[Stream] Incomplete or small file detected in jetstream at %s (%d bytes), falling back to external stream", localPath, info.Size())
+	} else if info, err := os.Stat(searchResultPath); err == nil && info.Size() < 1024*1024 {
+		log.Printf("[Stream] Small file detected in search folder: %s (%d bytes)", searchResultPath, info.Size())
 	}
 
 	// 4. Fallback: Get Stream URL from Squid Service & Proxy
