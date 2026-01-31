@@ -326,3 +326,60 @@ func (h *MetadataHandler) GetLyricsBySongId(c *gin.Context) {
 	}
 	h.proxyHandler.Handle(c)
 }
+
+func (h *MetadataHandler) GetMusicDirectory(c *gin.Context) {
+	id := c.Request.FormValue("id")
+	if strings.HasPrefix(id, "ext-") {
+		log.Printf("[Metadata] GetMusicDirectory for external ID: %s", id)
+
+		if strings.Contains(id, "-artist-") {
+			artist, albums, err := h.squidService.GetArtist(id)
+			if err != nil {
+				SendSubsonicError(c, ErrGeneric, err.Error())
+				return
+			}
+			var children []subsonic.Song
+			for _, alb := range albums {
+				children = append(children, subsonic.Song{
+					ID:       alb.ID,
+					Parent:   id,
+					Title:    alb.Title,
+					IsDir:    true,
+					Album:    alb.Title,
+					Artist:   alb.Artist,
+					CoverArt: alb.CoverArt,
+				})
+			}
+			resp := subsonic.Response{
+				Status:  "ok",
+				Version: "1.16.1",
+				Directory: &subsonic.Directory{
+					ID:    id,
+					Name:  artist.Name,
+					Child: children,
+				},
+			}
+			SendSubsonicResponse(c, resp)
+			return
+		} else if strings.Contains(id, "-album-") {
+			album, songs, err := h.squidService.GetAlbum(id)
+			if err != nil {
+				SendSubsonicError(c, ErrGeneric, err.Error())
+				return
+			}
+			resp := subsonic.Response{
+				Status:  "ok",
+				Version: "1.16.1",
+				Directory: &subsonic.Directory{
+					ID:    id,
+					Name:  album.Title,
+					Child: songs,
+				},
+			}
+			SendSubsonicResponse(c, resp)
+			return
+		}
+	}
+
+	h.proxyHandler.Handle(c)
+}

@@ -112,6 +112,7 @@ func (s *SquidService) GetSong(id string) (*subsonic.Song, error) {
 		ContentType: "audio/mpeg",
 		IsDir:       false,
 		IsVideo:     false,
+		Path:        fmt.Sprintf("squidwtf/%s/%s/%d.mp3", item.Artist.Name, item.Album.Title, item.ID),
 	}
 
 	// Cache Result
@@ -203,6 +204,7 @@ func (s *SquidService) GetAlbum(id string) (*subsonic.Album, []subsonic.Song, er
 			CoverArt:  subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", data.ID)),
 			Artist:    data.Artist.Name,
 			ArtistID:  subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", data.Artist.ID)),
+			IsDir:     true,
 		}
 
 		// Map Tracks
@@ -224,6 +226,7 @@ func (s *SquidService) GetAlbum(id string) (*subsonic.Album, []subsonic.Song, er
 				ContentType: "audio/mpeg",
 				IsDir:       false,
 				IsVideo:     false,
+				Path:        fmt.Sprintf("squidwtf/%s/%s/%d.mp3", data.Artist.Name, data.Title, t.ID),
 			})
 		}
 
@@ -366,6 +369,7 @@ func (s *SquidService) GetArtist(id string) (*subsonic.Artist, []subsonic.Album,
 			Artist:   artistName,
 			ArtistID: artist.ID,
 			CoverArt: albumID, // Explicitly set CoverArt to Album ID
+			IsDir:    true,
 		})
 	}
 

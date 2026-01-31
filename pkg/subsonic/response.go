@@ -14,6 +14,7 @@ type Response struct {
 	Playlist               *Playlist               `xml:"playlist,omitempty" json:"playlist,omitempty"`
 	Artist                 *ArtistWithAlbums       `xml:"artist,omitempty" json:"artist,omitempty"`
 	Album                  *AlbumWithSongs         `xml:"album,omitempty" json:"album,omitempty"`
+	Directory              *Directory              `xml:"directory,omitempty" json:"directory,omitempty"`
 	Song                   *Song                   `xml:"song,omitempty" json:"song,omitempty"`
 	Lyrics                 *Lyrics                 `xml:"lyrics,omitempty" json:"lyrics,omitempty"`
 	OpenSubsonicExtensions *OpenSubsonicExtensions `xml:"openSubsonicExtensions,omitempty" json:"openSubsonicExtensions,omitempty"`
@@ -99,6 +100,7 @@ type Album struct {
 	Duration  int    `xml:"duration,attr,omitempty" json:"duration,omitempty"`
 	Year      int    `xml:"year,attr,omitempty" json:"year,omitempty"`
 	Starred   string `xml:"starred,attr,omitempty" json:"starred,omitempty"` // ISO 8601 date
+	IsDir     bool   `xml:"isDir,attr" json:"isDir"`
 }
 
 type Song struct {
@@ -125,4 +127,10 @@ type Song struct {
 	BPM         int    `xml:"bpm,attr,omitempty" json:"bpm,omitempty"`
 	Comment     string `xml:"comment,attr,omitempty" json:"comment,omitempty"`
 	SortName    string `xml:"sortName,attr,omitempty" json:"sortName,omitempty"`
+}
+
+type Directory struct {
+	ID    string `xml:"id,attr" json:"id"`
+	Name  string `xml:"name,attr" json:"name"`
+	Child []Song `xml:"child"`
 }

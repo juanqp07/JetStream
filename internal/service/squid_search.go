@@ -207,6 +207,7 @@ func (s *SquidService) fetchSongs(urlStr string) ([]subsonic.Song, error) {
 			ContentType: "audio/mpeg",
 			IsDir:       false,
 			IsVideo:     false,
+			Path:        fmt.Sprintf("squidwtf/%s/%s/%d.mp3", item.Artist.Name, item.Album.Title, item.ID),
 		})
 	}
 	return songs, nil
@@ -275,6 +276,7 @@ func (s *SquidService) fetchAlbums(urlStr string) ([]subsonic.Album, error) {
 			ArtistID: subsonic.BuildID("squidwtf", "artist", fmt.Sprintf("%d", artistID)),
 			Year:     year,
 			CoverArt: subsonic.BuildID("squidwtf", "album", fmt.Sprintf("%d", item.ID)),
+			IsDir:    true,
 		})
 	}
 	return albums, nil
