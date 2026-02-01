@@ -345,38 +345,63 @@ func (s *SyncService) GetDownloadFormat() string {
 	return f
 }
 
-// VerifyIntegrity checks if an audio file is valid using ffprobe
+// VerifyIntegrity checks if an audio file is valid using ffprobe and ffmpeg demuxing
 func (s *SyncService) VerifyIntegrity(path string) error {
 	// Root context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Use ffprobe to check if it's a valid audio file and has a duration
-	args := []string{
+	// 1. Basic size check
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() < 128*1024 { // 128KB minimum for any audio file
+		return fmt.Errorf("file is too small (%d bytes)", info.Size())
+	}
+
+	// 2. Use ffprobe to check if it's a valid audio file and has a readable duration
+	argsProbe := []string{
 		"-v", "error",
-		"-show_entries", "format=duration",
+		"-show_entries", "format=duration,bit_rate",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		path,
 	}
 
-	cmd := exec.CommandContext(ctx, "ffprobe", args...)
-	output, err := cmd.CombinedOutput()
+	cmdProbe := exec.CommandContext(ctx, "ffprobe", argsProbe...)
+	outputProbe, err := cmdProbe.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ffprobe failed: %v (output: %s)", err, string(output))
+		return fmt.Errorf("ffprobe failed: %v (output: %s)", err, string(outputProbe))
 	}
 
-	durationStr := strings.TrimSpace(string(output))
-	if durationStr == "" || durationStr == "N/A" {
+	lines := strings.Split(strings.TrimSpace(string(outputProbe)), "\n")
+	if len(lines) < 1 || lines[0] == "" || lines[0] == "N/A" {
 		return fmt.Errorf("could not determine file duration")
 	}
 
-	duration, err := strconv.ParseFloat(durationStr, 64)
+	duration, err := strconv.ParseFloat(lines[0], 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse duration: %v", err)
 	}
 
-	if duration <= 1.0 { // Sanity check: must be at least 1 second
+	if duration <= 1.0 {
 		return fmt.Errorf("file duration too short (%.2fs)", duration)
+	}
+
+	// 3. (Robust) Use ffmpeg to demux the file to detect truncation
+	// This scans the entire file but without decoding audio packets (very fast)
+	argsMux := []string{
+		"-v", "error",
+		"-i", path,
+		"-c", "copy",
+		"-f", "null",
+		"-",
+	}
+
+	cmdMux := exec.CommandContext(ctx, "ffmpeg", argsMux...)
+	outputMux, err := cmdMux.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("stream integrity check (demux) failed: %v (output: %s)", err, string(outputMux))
 	}
 
 	return nil
