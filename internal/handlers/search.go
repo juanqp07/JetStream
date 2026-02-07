@@ -109,7 +109,25 @@ func (h *SearchHandler) Search3(c *gin.Context) {
 	}
 
 	if navidromeResult.SearchResult3 == nil {
-		navidromeResult.SearchResult3 = &subsonic.SearchResult3{}
+		navidromeResult.SearchResult3 = &subsonic.SearchResult3{
+			Artist:   []subsonic.Artist{},
+			Album:    []subsonic.Album{},
+			Song:     []subsonic.Song{},
+			Playlist: []subsonic.Playlist{},
+		}
+	} else {
+		if navidromeResult.SearchResult3.Artist == nil {
+			navidromeResult.SearchResult3.Artist = []subsonic.Artist{}
+		}
+		if navidromeResult.SearchResult3.Album == nil {
+			navidromeResult.SearchResult3.Album = []subsonic.Album{}
+		}
+		if navidromeResult.SearchResult3.Song == nil {
+			navidromeResult.SearchResult3.Song = []subsonic.Song{}
+		}
+		if navidromeResult.SearchResult3.Playlist == nil {
+			navidromeResult.SearchResult3.Playlist = []subsonic.Playlist{}
+		}
 	}
 
 	if squidResult != nil {
@@ -225,7 +243,21 @@ func (h *SearchHandler) Search2(c *gin.Context) {
 	}
 
 	if navidromeResult.SearchResult2 == nil {
-		navidromeResult.SearchResult2 = &subsonic.SearchResult2{}
+		navidromeResult.SearchResult2 = &subsonic.SearchResult2{
+			Artist: []subsonic.Artist{},
+			Album:  []subsonic.Album{},
+			Song:   []subsonic.Song{},
+		}
+	} else {
+		if navidromeResult.SearchResult2.Artist == nil {
+			navidromeResult.SearchResult2.Artist = []subsonic.Artist{}
+		}
+		if navidromeResult.SearchResult2.Album == nil {
+			navidromeResult.SearchResult2.Album = []subsonic.Album{}
+		}
+		if navidromeResult.SearchResult2.Song == nil {
+			navidromeResult.SearchResult2.Song = []subsonic.Song{}
+		}
 	}
 
 	if squidResult != nil {
@@ -320,7 +352,13 @@ func (h *SearchHandler) Search(c *gin.Context) {
 	}
 
 	if navidromeResult.SearchResult == nil {
-		navidromeResult.SearchResult = &subsonic.SearchResult{}
+		navidromeResult.SearchResult = &subsonic.SearchResult{
+			Match: []subsonic.Song{},
+		}
+	} else {
+		if navidromeResult.SearchResult.Match == nil {
+			navidromeResult.SearchResult.Match = []subsonic.Song{}
+		}
 	}
 
 	if squidResult != nil {

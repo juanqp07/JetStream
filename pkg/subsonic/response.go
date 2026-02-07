@@ -55,20 +55,20 @@ type Error struct {
 }
 
 type SearchResult3 struct {
-	Artist   []Artist   `xml:"artist,omitempty" json:"artist,omitempty"`
-	Album    []Album    `xml:"album,omitempty" json:"album,omitempty"`
-	Song     []Song     `xml:"song,omitempty" json:"song,omitempty"`
-	Playlist []Playlist `xml:"playlist,omitempty" json:"playlist,omitempty"`
+	Artist   []Artist   `xml:"artist,omitempty" json:"artist"`
+	Album    []Album    `xml:"album,omitempty" json:"album"`
+	Song     []Song     `xml:"song,omitempty" json:"song"`
+	Playlist []Playlist `xml:"playlist,omitempty" json:"playlist"`
 }
 
 type SearchResult2 struct {
-	Artist []Artist `xml:"artist,omitempty" json:"artist,omitempty"`
-	Album  []Album  `xml:"album,omitempty" json:"album,omitempty"`
-	Song   []Song   `xml:"song,omitempty" json:"song,omitempty"`
+	Artist []Artist `xml:"artist,omitempty" json:"artist"`
+	Album  []Album  `xml:"album,omitempty" json:"album"`
+	Song   []Song   `xml:"song,omitempty" json:"song"`
 }
 
 type SearchResult struct {
-	Match []Song `xml:"match,omitempty" json:"match,omitempty"`
+	Match []Song `xml:"match,omitempty" json:"match"`
 }
 
 type OpenSubsonicExtensions struct {

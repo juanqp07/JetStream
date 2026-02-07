@@ -291,6 +291,10 @@ func (h *MetadataHandler) GetOpenSubsonicExtensions(c *gin.Context) {
 				{Name: "songLyrics", Versions: []string{"1"}},
 				{Name: "formPost", Versions: []string{"1"}},
 				{Name: "transcoding", Versions: []string{"1"}},
+				{Name: "scrobble", Versions: []string{"1"}},
+				{Name: "bookmarks", Versions: []string{"1"}},
+				{Name: "getPlaylist", Versions: []string{"1"}},
+				{Name: "search3", Versions: []string{"1"}},
 			},
 		},
 	}

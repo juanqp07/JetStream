@@ -19,8 +19,92 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// CORSMiddleware handles Cross-Origin Resource Sharing
+func CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Subsonic-Version, X-Subsonic-Client, X-ND-Authorization, X-ND-AppId")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "X-Total-Count, X-Subsonic-Version, X-Subsonic-Status")
+
+		// Add Subsonic specific headers that some clients expect
+		c.Writer.Header().Set("X-Subsonic-Version", "1.16.1")
+		c.Writer.Header().Set("X-Subsonic-Status", "ok")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+type bodyLogWriter struct {
+	gin.ResponseWriter
+	body *strings.Builder
+}
+
+func (w bodyLogWriter) Write(b []byte) (int, error) {
+	if w.body.Len() < 1024 { // Only log first 1KB
+		w.body.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// DebugLoggingMiddleware logs the full request and response for debugging
+func DebugLoggingMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Skip for media streams or binary data to avoid log bloat
+		path := c.Request.URL.Path
+		isMedia := strings.Contains(path, "stream") || strings.Contains(path, "download") || strings.Contains(path, "getCoverArt")
+		if isMedia {
+			c.Next()
+			return
+		}
+
+		start := time.Now()
+		headers := make(map[string]string)
+		for k, v := range c.Request.Header {
+			if len(v) > 0 {
+				if k == "Authorization" || k == "X-ND-Authorization" {
+					headers[k] = "[REDACTED]"
+				} else {
+					headers[k] = v[0]
+				}
+			}
+		}
+
+		slog.Info("Incoming Request",
+			"method", c.Request.Method,
+			"url", c.Request.URL.String(),
+			"headers", headers,
+			"ua", c.Request.UserAgent())
+
+		c.Next()
+
+		latency := time.Since(start)
+		slog.Info("Outgoing Response",
+			"status", c.Writer.Status(),
+			"latency", latency,
+			"url", c.Request.URL.String(),
+			"content_type", c.Writer.Header().Get("Content-Type"))
+	}
+}
+
 // SendSubsonicResponse sends a response in either XML or JSON format based on the 'f' query parameter.
 func SendSubsonicResponse(c *gin.Context, resp subsonic.Response) {
+	// Add Subsonic specific headers that some clients expect
+	c.Writer.Header().Set("X-Subsonic-Version", "1.16.1")
+	c.Writer.Header().Set("X-Subsonic-Status", "ok")
+
 	format := c.Query("f")
 	if format == "json" {
 		c.JSON(http.StatusOK, gin.H{"subsonic-response": resp})

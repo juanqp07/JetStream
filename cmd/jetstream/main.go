@@ -31,12 +31,23 @@ func main() {
 	metadataHandler := handlers.NewMetadataHandler(squidService, syncService, proxyHandler)
 	handler := handlers.NewHandler(squidService, syncService, proxyHandler)
 	maintenanceHandler := handlers.NewMaintenanceHandler(syncService)
+	navidromeAPIHandler := handlers.NewNavidromeAPIHandler(squidService, proxyHandler)
 
 	// 3. Setup Router
 	r := gin.Default()
+	r.Use(handlers.CORSMiddleware())
+	r.Use(handlers.DebugLoggingMiddleware())
 	r.SetTrustedProxies(nil)
 
-	// 4. Subsonic API Routes
+	// 4. Navidrome Native API Routes (Interception for Feishin Native Mode)
+	apiGroup := r.Group("/api")
+	{
+		apiGroup.GET("/song", navidromeAPIHandler.SearchSongs)
+		apiGroup.GET("/album", navidromeAPIHandler.SearchAlbums)
+		apiGroup.GET("/artist", navidromeAPIHandler.SearchArtists)
+	}
+
+	// 5. Subsonic API Routes
 	subsonicGroup := r.Group("/rest")
 	{
 		// System
